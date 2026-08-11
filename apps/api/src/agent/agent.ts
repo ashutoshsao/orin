@@ -1,54 +1,62 @@
 import { context } from "./context";
 import { config } from "./config";
-import { DeepSeekProvider } from "./LLM_Providers/DeekSeek/DeekSeekProvider";
-import { toolExecution } from "./tool";
-import { LLMProvider, ToolType } from "./types";
+import { DeepSeekProvider } from "./LLM_Providers/DeepSeek/DeepSeek.interface";
+import { toolExecution, tools } from "./tools";
+import { LLMProvider, ToolDefinition } from "./types";
 
 const llmProvider = new DeepSeekProvider("deepseek-v4-flash", "low");
 
-async function agentRun(llmProvider: LLMProvider, tools: ToolType, userPrompt: string, config: Record<string, string>) {
+async function agentRun(llmProvider: LLMProvider, tools: ToolDefinition[], userPrompt: string, config: Record<string, string>) {
 
   //1. user input
   context.push({
     role: "user", content: userPrompt
   })
 
-  console.log(` starting context \n\n ${JSON.stringify(context, null, 2)}`)
+  console.log(`CONTEXT BEFORE LLM\n${JSON.stringify(context, null, 2)}\n`)
 
   let start = parseInt(config.initIteration)
   let end = parseInt(config.maxIteration)
 
   while (start <= end) {
 
-    const response = await llmProvider.callLLM(context, tools)
+    const response = await llmProvider.callLLM(context, tools);
 
-    console.log(`iteration no: ${start}`)
+    console.log(`ITERATION NO: ${start}`)
 
-    console.log(`the whole response \n\n ${JSON.stringify(response, null, 2)}`);
+    console.log(`WHOLE RESPONSE OBJECT\n${JSON.stringify(response, null, 2)}\n`);
 
     // add assistant response to context
     if (response.status === "done") {
+
       context.push({ role: "assistant", content: response.content });
-      console.log(`final agent response \n\n ${response.content}`);
+      console.log(`FINAL ANSWER\n${JSON.stringify(response.content, null, 2)}\n`);
       break;
-    }
-    else if (response.status === "error") {
-      throw new Error(response.content)
-    }
-    else if (response.status === "toolCall") {
+
+    } else if (response.status === "toolCall") {
+
       //add requested tools to context
       context.push({
         role: "assistant", content: response.content
       })
+      console.log(`TOOL CALL REQUESTED\n${JSON.stringify(response.content, null, 2)}\n`);
       const toolResponse = await toolExecution(response.content.toolCalls)
       //add tool responses to context
       context.push({
         role: "tool", content: toolResponse
       })
+      console.log(`TOOL RESULTS\n${JSON.stringify(toolResponse, null, 2)}\n`);
+
+    } else if (response.status === "error") {
+      console.log(response.content)
+      break;
+    } else {
+      console.log(response.content)
+      break;
     }
 
     start++
   }
 }
 
-agentRun(llmProvider, "can you list what is in current directory,then tell waht packages are installed in package.json", config);
+agentRun(llmProvider, tools, "list files, then read package.json, then tell me the name field", config);

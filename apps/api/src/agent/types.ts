@@ -3,38 +3,54 @@ import z from "zod";
 const role = z.enum(["system", "user", "assistant", "tool"]);
 const effort = z.enum(["high", "medium", "low"]);
 
-export type ToolType = {
-  index: number,
+export type ToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: object;
+      properties: Record<string,
+        {
+          type: string;
+          description: string;
+        }>;
+      required: string[];
+      additionalProperties: boolean;
+    };
+  };
+  strict: boolean;
+};
+
+
+//requested tool call type
+export type ToolCall = {
   id: string,
   name: string,
-  argument: string
+  argument: Record<string, string>
 }
 
 export type ToolCallsType = {
   content: string,
   reasoningContent: string,
-  toolCalls: ToolType[]
+  toolCalls: ToolCall[]
 }
+
+//tool result type
 
 type ToolResultType = {
   id: string,
   content: string
 }
 
-type ToolResultsType = ToolResultType[]
-
 export type LLMResponseType =
   {
-    status: "done"
+    status: "done" | "error" | "exception"
     content: string
   } |
   {
     status: "toolCall"
     content: ToolCallsType
-  } |
-  {
-    status: "error"
-    content: string
   }
 
 export type MessageType = {
@@ -47,13 +63,13 @@ export type MessageType = {
 } |
 {
   role: "tool",
-  content: ToolResultsType
+  content: ToolResultType[]
 }
 
 export type ContextType = MessageType[];
 
 export type LLMProvider = {
-  callLLM: (context: ContextType, tools: ToolCallsType) => Promise<LLMResponseType>
+  callLLM: (context: ContextType, tools: ToolDefinition[]) => Promise<LLMResponseType>
 }
 
 export type EffortType = z.infer<typeof effort>
