@@ -1,3 +1,4 @@
 export const config = {
-  maxIteration: "20"
+  maxIteration: "20",
+  initIteration: "1",
 }
