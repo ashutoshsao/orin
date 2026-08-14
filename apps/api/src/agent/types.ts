@@ -38,19 +38,30 @@ export type ToolCallsType = {
 
 //tool result type
 
-type ToolResultType = {
+export type ToolResultType = {
   id: string,
-  content: string
+  content: string,
+  ok: boolean
+}
+
+export type UsageType = {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  cacheHitTokens?: number
+  cacheMissTokens?: number
 }
 
 export type LLMResponseType =
   {
     status: "done" | "error" | "exception"
     content: string
+    usage?: UsageType
   } |
   {
     status: "toolCall"
     content: ToolCallsType
+    usage?: UsageType
   }
 
 export type MessageType = {

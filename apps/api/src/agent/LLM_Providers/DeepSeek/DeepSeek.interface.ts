@@ -1,9 +1,8 @@
 import OpenAI from "openai";
-import { ContextType, EffortType, LLMResponseType, ToolCall, ToolDefinition } from "../../types";
-import { DeepSeekMessage } from "./DeepSeek.types";
+import { ContextType, EffortType, LLMResponseType, ToolCall, ToolDefinition, UsageType } from "../../types";
+import { DeepSeekMessage, DeepSeekUsage } from "./DeepSeek.types";
 import { Env } from "../../../config";
 
-//new api instance
 const openai = new OpenAI({
   baseURL: "https://api.deepseek.com",
   apiKey: Env.DEEPSEEK_API_KEY
@@ -16,13 +15,8 @@ export class DeepSeekProvider {
 
   async callLLM(context: ContextType, tools: ToolDefinition[]): Promise<LLMResponseType> {
     try {
-      //llm call
-      console.log(`INTERNAL MESSAGES:\n${JSON.stringify(context, null, 2)}\n`)
-      console.log(`INTERNAL TOOLS:\n${JSON.stringify(tools, null, 2)}\n`)
       const deekSeekMessages = transalteMessage(context)
       const deekSeekTools = translateTools(tools)
-      console.log(`DEEPSEEK MESSAGES:\n${JSON.stringify(deekSeekMessages, null, 2)}\n`)
-      console.log(`DEEPSEEK TOOLS:\n${JSON.stringify(deekSeekTools, null, 2)}\n`)
       const response = await openai.chat.completions.create({
         model: this.model,
         reasoning_effort: this.effort,
@@ -31,14 +25,21 @@ export class DeepSeekProvider {
         stream: false
       });
 
+      const rawUsage = response.usage as DeepSeekUsage | undefined;
+      const usage: UsageType | undefined = rawUsage ? {
+        promptTokens: rawUsage.prompt_tokens,
+        completionTokens: rawUsage.completion_tokens,
+        totalTokens: rawUsage.total_tokens,
+        cacheHitTokens: rawUsage.prompt_cache_hit_tokens,
+        cacheMissTokens: rawUsage.prompt_cache_miss_tokens,
+      } : undefined;
+
       if (response.choices[0].finish_reason === "stop") {
 
-        // 1. final response - response body
-        return { status: "done", content: response.choices[0].message.content! }
+        return { status: "done", content: response.choices[0].message.content!, usage }
 
       } else if (response.choices[0].finish_reason === "tool_calls") {
 
-        // 2. tool call - tool array for all requested tool calls
         const originalToolCalls = response.choices[0].message.tool_calls!;
         const toolsArr: ToolCall[] = [];
         for (let i = 0; i < originalToolCalls.length; i++) {
@@ -49,11 +50,13 @@ export class DeepSeekProvider {
           })
         }
         return {
-          status: "toolCall", content: {
+          status: "toolCall",
+          content: {
             toolCalls: toolsArr,
             content: response.choices[0].message.content!,
             reasoningContent: response.choices[0].message.reasoning_content!
-          }
+          },
+          usage
         }
       } else {
         return { status: "exception", content: "unexpected error from llm" }
