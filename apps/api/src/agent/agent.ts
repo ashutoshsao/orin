@@ -8,13 +8,27 @@ const TEMPLATE = "orin-react-workspace-dev";
 // the `finally` kills the sandbox as soon as a run finishes normally.
 const SANDBOX_TIMEOUT_MS = 60 * 60_000;
 
+// One structured agent event. Same shape that's logged to stdout and, when a sink
+// is provided, handed to `onEvent` — the seam the SSE transport taps without the
+// loop ever knowing about HTTP.
+export type AgentEvent = {
+  ts: string;
+  sessionId: string;
+  event: string;
+  [key: string]: unknown;
+};
+
 export class AgentSession {
   private context: ContextType;
   private sessionId: string;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
-  private constructor(private llmProvider: LLMProvider, private sandbox: Sandbox) {
+  private constructor(
+    private llmProvider: LLMProvider,
+    private sandbox: Sandbox,
+    private onEvent?: (event: AgentEvent) => void,
+  ) {
     this.sessionId = crypto.randomUUID();
     this.context = [
       { role: "system", content: "You are a helpful assistant, also you are provided with tools you can provide with commands that can be execute" },
@@ -23,9 +37,11 @@ export class AgentSession {
 
   // Async construction: `await Sandbox.create(...)` can't live in a constructor,
   // so it lives here and the session isn't returned until the sandbox is live.
-  static async create(llmProvider: LLMProvider) {
+  // `onEvent` (optional) is how transports (e.g. SSE) receive events; without it
+  // the session just logs to stdout, as the CLI harness does.
+  static async create(llmProvider: LLMProvider, onEvent?: (event: AgentEvent) => void) {
     const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS });
-    const session = new AgentSession(llmProvider, sandbox);
+    const session = new AgentSession(llmProvider, sandbox, onEvent);
     session.log("sandbox_created", { sandboxId: sandbox.sandboxId, template: TEMPLATE });
     return session;
   }
@@ -69,7 +85,9 @@ export class AgentSession {
   }
 
   private log(event: string, data: Record<string, unknown> = {}) {
-    console.log(JSON.stringify({ ts: new Date().toISOString(), sessionId: this.sessionId, event, ...data }));
+    const entry: AgentEvent = { ts: new Date().toISOString(), sessionId: this.sessionId, event, ...data };
+    console.log(JSON.stringify(entry));
+    this.onEvent?.(entry);
   }
 
   async run(userPrompt: string) {

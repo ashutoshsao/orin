@@ -8,8 +8,10 @@
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",
+    "@elysiajs/cors": "^1.3.0",
     "@repo/ui": "*",
     "e2b": "^2.46.1",
+    "elysia": "^1.3.0",
     "graphql": "^17.0.2",
     "openai": "^7.4.0"
   },
