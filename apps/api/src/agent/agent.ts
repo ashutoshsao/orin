@@ -1,6 +1,6 @@
 import { Sandbox } from "e2b";
 import { ContextType, LLMProvider } from "./types";
-import { toolExecution, tools } from "./tools";
+import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 
 const TEMPLATE = "orin-react-workspace-dev";
@@ -34,6 +34,38 @@ export class AgentSession {
   async close() {
     await this.sandbox.kill();
     this.log("sandbox_closed", { sandboxId: this.sandbox.sandboxId });
+  }
+
+  // Start the dev server and hand back a public URL. `--host` binds Vite to
+  // 0.0.0.0 so E2B's proxy can reach it (localhost-only wouldn't be reachable);
+  // `background` so it doesn't block. Then we *independently* poll the server
+  // (our own check, not the model's claim) before returning the getHost URL.
+  async startPreview(port = 8080): Promise<{ url: string; httpStatus: string }> {
+    await this.sandbox.commands.run(`bun run dev --host --port ${port}`, {
+      cwd: WORKDIR,
+      background: true,
+    });
+
+    const url = `https://${this.sandbox.getHost(port)}`;
+
+    // Probe the PUBLIC url from here (the orchestrator), not localhost inside the
+    // sandbox — this exercises the full path (E2B proxy → Vite host check → app),
+    // which is exactly what the browser hits. A localhost probe would bypass the
+    // host check and give false confidence.
+    let httpStatus = "no-response";
+    for (let i = 0; i < 30; i++) {
+      try {
+        const res = await fetch(url);
+        httpStatus = String(res.status);
+        if (res.ok) break;
+      } catch {
+        // proxy/server not ready yet — retry
+      }
+      await Bun.sleep(500);
+    }
+
+    this.log("preview_ready", { port, url, httpStatus });
+    return { url, httpStatus };
   }
 
   private log(event: string, data: Record<string, unknown> = {}) {
