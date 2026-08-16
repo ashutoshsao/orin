@@ -9,6 +9,7 @@
   "dependencies": {
     "@apollo/server": "^5.5.1",
     "@repo/ui": "*",
+    "e2b": "^2.46.1",
     "graphql": "^17.0.2",
     "openai": "^7.4.0"
   },

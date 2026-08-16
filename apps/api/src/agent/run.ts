@@ -1,9 +1,13 @@
 import { DeepSeekProvider } from "./LLM_Providers/DeepSeek/DeepSeek.interface";
-import { scaffoldWorkspace } from "../sandbox/scaffoldWorkspace";
 import { AgentSession } from "./agent";
 
 const llmProvider = new DeepSeekProvider("deepseek-v4-flash", "low");
-const workspace = await scaffoldWorkspace();
 
-const session = new AgentSession(llmProvider, workspace);
-await session.run("build me a todo app");
+// Sandbox is the workspace now — no local scaffoldWorkspace() / cwd anymore.
+const session = await AgentSession.create(llmProvider);
+try {
+  await session.run("build me a todo app");
+} finally {
+  // Always tear the sandbox down, even if the run throws.
+  await session.close();
+}
