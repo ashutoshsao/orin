@@ -51,11 +51,14 @@ export const app = new Elysia()
       // Run the agent in the background; its events flow into the queue.
       const runner = (async () => {
         try {
-          const provider = new DeepSeekProvider("deepseek-v4-flash", "low");
+          const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
           session = await AgentSession.create(provider, (e) => queue.push(e));
           sessions.set(session.id, session); // now discoverable by follow-up POSTs
-          await session.submit(query.prompt); // first turn
-          await session.startPreview(); // pushes preview_ready (with the URL)
+          // Start the dev server in parallel with the first build so the preview is
+          // live *while* the agent edits (Vite HMR shows progress), not only after.
+          const preview = session.startPreview(); // pushes preview_ready (with the URL)
+          await session.submit(query.prompt); // first turn — edits stream to the live preview
+          await preview.catch(() => { }); // settle/surface any preview startup error
         } catch (e) {
           queue.push({ ts: new Date().toISOString(), sessionId: "", event: "stream_error", message: String(e) });
         }
@@ -82,9 +85,11 @@ export const app = new Elysia()
         // Tear the sandbox down (this is what ties its lifetime to the connection).
         clearInterval(heartbeat);
         queue.finish();
-        await runner.catch(() => { });
         if (session) sessions.delete(session.id);
+        // close() BEFORE awaiting runner: it flushes any parked ask_user promise,
+        // so a turn blocked waiting for an answer unwinds instead of deadlocking.
         await session?.close().catch(() => { });
+        await runner.catch(() => { });
       }
     },
     {
@@ -107,6 +112,27 @@ export const app = new Elysia()
     },
     {
       body: t.Object({ prompt: t.String({ minLength: 1 }) }),
+    },
+  )
+  // Answer to an ask_user question. Resolves the parked tool call → the loop
+  // resumes with the answer as the tool result → progress flows down the SSE stream.
+  .post(
+    "/agent/:sessionId/answer",
+    ({ params, body, set }) => {
+      const session = sessions.get(params.sessionId);
+      if (!session) {
+        set.status = 404;
+        return { error: "session not found" };
+      }
+      const ok = session.answer(body.callId, body.answer);
+      if (!ok) {
+        set.status = 409;
+        return { error: "no pending question for that callId" };
+      }
+      return { ok: true };
+    },
+    {
+      body: t.Object({ callId: t.String(), answer: t.String() }),
     },
   )
   .listen(PORT);
