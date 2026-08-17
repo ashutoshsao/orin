@@ -2,6 +2,7 @@ import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession, type AgentEvent } from "./agent/agent";
+import { auth } from "./auth";
 
 const PORT = 4000;
 
@@ -42,6 +43,8 @@ function createEventQueue<T>() {
 
 export const app = new Elysia()
   .use(cors())
+  // Better Auth routes (sign-up/in/out, session) mount at /api/auth/*
+  .mount(auth.handler)
   .get(
     "/agent/stream",
     async function* ({ query }) {
