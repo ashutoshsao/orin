@@ -55,7 +55,7 @@ export const app = new Elysia()
       const runner = (async () => {
         try {
           const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
-          session = await AgentSession.create(provider, (e) => queue.push(e));
+          session = await AgentSession.create(provider, { onEvent: (e) => queue.push(e) });
           sessions.set(session.id, session); // now discoverable by follow-up POSTs
           // Start the dev server in parallel with the first build so the preview is
           // live *while* the agent edits (Vite HMR shows progress), not only after.
