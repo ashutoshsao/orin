@@ -40,6 +40,9 @@ export type CreateOptions = {
   onEvent?: (event: AgentEvent) => void;
   // Persist a batch of newly-appended messages; `startSeq` is their index in context.
   persist?: (messages: MessageType[], startSeq: number) => Promise<void>;
+  // Persist a per-round codebase snapshot (git bundle bytes + commit hash); `durableN`
+  // is how many context messages the snapshot covers (M5b). Injected like `persist`.
+  persistSnapshot?: (bundle: Uint8Array, commitHash: string, durableN: number) => Promise<void>;
   // Seed context from a prior project (resume); replaces the default [system].
   initialContext?: ContextType;
 };
@@ -69,6 +72,7 @@ export class AgentSession {
     private sandbox: Sandbox,
     private onEvent?: (event: AgentEvent) => void,
     private persist?: (messages: MessageType[], startSeq: number) => Promise<void>,
+    private persistSnapshot?: (bundle: Uint8Array, commitHash: string, durableN: number) => Promise<void>,
   ) {
     this.sessionId = crypto.randomUUID();
     this.context = [
@@ -81,7 +85,7 @@ export class AgentSession {
   // `onEvent`/`persist` are how transports/DB tap in; `initialContext` resumes a project.
   static async create(llmProvider: LLMProvider, opts: CreateOptions = {}) {
     const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS });
-    const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist);
+    const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist, opts.persistSnapshot);
     if (opts.initialContext && opts.initialContext.length > 0) {
       // Resume: loaded messages (incl. the original system prompt) are already
       // persisted, so start the tail after them.
@@ -126,10 +130,29 @@ export class AgentSession {
       if (out === "NOCHANGE" || out === "") return null;
       this.latestCommit = out;
       this.log("snapshot", { commit: out });
+      await this.pushSnapshot(out);
       return out;
     } catch (e) {
       this.log("snapshot_error", { message: String(e) });
       return null;
+    }
+  }
+
+  // Push the round's snapshot to durable storage (R2), if a sink is injected. Builds a
+  // FULL, self-contained git bundle (all history reachable from HEAD) so restore is a
+  // single clone — history travels with it, keeping rewind possible. `durableN` is the
+  // current context length: how many messages this codebase state corresponds to.
+  // Best-effort and synchronous for now; a Redis queue makes it non-blocking later.
+  private async pushSnapshot(commitHash: string) {
+    if (!this.persistSnapshot) return;
+    try {
+      const bundlePath = `/tmp/${commitHash}.bundle`;
+      await this.sandbox.commands.run(`git bundle create ${bundlePath} HEAD`, { cwd: WORKDIR });
+      const bundle = await this.sandbox.files.read(bundlePath, { format: "bytes" });
+      await this.persistSnapshot(bundle, commitHash, this.context.length);
+      this.log("snapshot_pushed", { commit: commitHash, bytes: bundle.length, durableN: this.context.length });
+    } catch (e) {
+      this.log("snapshot_push_error", { commit: commitHash, message: String(e) });
     }
   }
 

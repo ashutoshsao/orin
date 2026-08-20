@@ -16,6 +16,10 @@ export const project = pgTable("project", {
   userId: text("user_id").notNull().references(() => user.id),
   name: text("name").notNull(),
   latestSnapshotKey: text("latest_snapshot_key"), // R2 key for codebase restore (M5b)
+  // How many context messages the latest pushed snapshot covers — the "durable up to N"
+  // marker. On sandbox-death restore, context is clamped to this so replayed history
+  // never runs ahead of the restorable codebase (M5b step 5).
+  durableCodebaseN: integer("durable_codebase_n"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

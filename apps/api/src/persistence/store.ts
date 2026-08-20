@@ -1,6 +1,7 @@
-import { db, message } from "@repo/db";
+import { db, message, project } from "@repo/db";
 import { asc, eq } from "drizzle-orm";
 import type { ContextType, MessageType } from "../agent/types";
+import { r2, snapshotKey } from "./r2";
 
 // A message row = one MessageType: role + jsonb content (string for user/system,
 // ToolCallsType for an assistant tool call, ToolResultType[] for a tool result).
@@ -19,6 +20,22 @@ export function messagePersister(projectId: string) {
         content: m.content as unknown, // jsonb
       })),
     );
+  };
+}
+
+// Project-scoped snapshot persister injected into AgentSession. Uploads a git bundle
+// (built + read out of the sandbox by the session) to R2, then advances the project's
+// pointer: the R2 key to restore from, and `durableN` = how many context messages this
+// snapshot covers (the durable-up-to-N clamp marker). Synchronous for now — the Redis
+// queue that makes this non-blocking is a later step.
+export function snapshotPersister(projectId: string, userId: string) {
+  return async (bundle: Uint8Array, commitHash: string, durableN: number) => {
+    const key = snapshotKey(userId, projectId, commitHash);
+    await r2.write(key, bundle);
+    await db
+      .update(project)
+      .set({ latestSnapshotKey: key, durableCodebaseN: durableN, updatedAt: new Date() })
+      .where(eq(project.id, projectId));
   };
 }
 

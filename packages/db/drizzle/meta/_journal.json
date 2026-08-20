@@ -15,6 +15,13 @@
       "when": 1788988959090,
       "tag": "0001_flowery_the_initiative",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789028856704,
+      "tag": "0002_loving_korath",
+      "breakpoints": true
     }
   ]
 }
