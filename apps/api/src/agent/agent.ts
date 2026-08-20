@@ -58,6 +58,9 @@ export class AgentSession {
   private pendingQuestions = new Map<string, (answer: string) => void>();
   // How many context messages are already persisted, so flush() only writes the tail.
   private persistedCount = 0;
+  // Latest per-round git commit in the sandbox (M5b). null until the first snapshot;
+  // the R2 push (step 3) will bundle deltas from the last-pushed hash to this.
+  private latestCommit: string | null = null;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -102,6 +105,31 @@ export class AgentSession {
       this.persistedCount = this.context.length;
     } catch (e) {
       this.log("persist_error", { message: String(e) });
+    }
+  }
+
+  // Snapshot the workspace as one round's git commit (M5b). Returns the new commit
+  // hash, or null if the round changed no files (e.g. an ask_user or final-only
+  // round — git has nothing to commit). Called at each round boundary BEFORE flush()
+  // so the ordering is codebase-first, context-second: a crash between the two leaves
+  // the codebase AHEAD of context (safe/recoverable), never behind. Best-effort — a
+  // git hiccup is logged, not thrown, so it can never block context persistence.
+  private async snapshot(): Promise<string | null> {
+    try {
+      // Stage everything, then commit only if the index actually changed; echo a
+      // sentinel when it didn't so we can tell "new snapshot" from "nothing to do".
+      const res = await this.sandbox.commands.run(
+        'git add -A; if git diff --cached --quiet; then echo NOCHANGE; else git commit -q -m "round" && git rev-parse HEAD; fi',
+        { cwd: WORKDIR },
+      );
+      const out = res.stdout.trim();
+      if (out === "NOCHANGE" || out === "") return null;
+      this.latestCommit = out;
+      this.log("snapshot", { commit: out });
+      return out;
+    } catch (e) {
+      this.log("snapshot_error", { message: String(e) });
+      return null;
     }
   }
 
@@ -151,6 +179,12 @@ export class AgentSession {
   // Stable id for the session registry / routing follow-up POSTs to this session.
   get id() {
     return this.sessionId;
+  }
+
+  // Latest per-round snapshot commit (M5b). The R2 push (step 3) bundles the delta
+  // from the last-pushed hash up to this.
+  get lastCommit(): string | null {
+    return this.latestCommit;
   }
 
   // Submit a prompt (initial or follow-up). If a turn is already running, the
@@ -218,6 +252,7 @@ export class AgentSession {
 
         this.context.push({ role: "assistant", content: response.content });
         this.log("final", { iteration: start, content: response.content });
+        await this.snapshot();
         await this.flush();
         break;
 
@@ -244,8 +279,9 @@ export class AgentSession {
           tools: response.content.toolCalls.map((t, i) => ({ name: t.name, ok: toolResponse[i].ok }))
         })
 
-        // Round complete (assistant tool_calls + tool results both appended) —
-        // persist them together, keeping the saved log always valid.
+        // Round complete (assistant tool_calls + tool results both appended). Snapshot
+        // the files this round wrote (codebase-first), then persist the context rows.
+        await this.snapshot();
         await this.flush();
 
       } else if (response.status === "error") {

@@ -9,11 +9,13 @@ export type ToolDefinition = {
     name: string;
     description: string;
     parameters: {
-      type: object;
+      type: string;
       properties: Record<string,
         {
           type: string;
           description: string;
+          // present for array params (e.g. ask_user's `options`): the element schema
+          items?: { type: string };
         }>;
       required: string[];
       additionalProperties: boolean;
