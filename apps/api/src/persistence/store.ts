@@ -39,6 +39,20 @@ export function snapshotPersister(projectId: string, userId: string) {
   };
 }
 
+// Fetch the latest codebase bundle for a project from R2, or null if it has none
+// (new project, or nothing pushed yet). Injected into AgentSession to rehydrate the
+// sandbox's files on resume. Returns raw bundle bytes; the session unpacks them.
+export function snapshotLoader(projectId: string) {
+  return async (): Promise<Uint8Array | null> => {
+    const [row] = await db
+      .select({ key: project.latestSnapshotKey })
+      .from(project)
+      .where(eq(project.id, projectId));
+    if (!row?.key) return null;
+    return await r2.file(row.key).bytes();
+  };
+}
+
 // Load a project's conversation back into a ContextType for resume.
 export async function loadContext(projectId: string): Promise<ContextType> {
   const rows = await db

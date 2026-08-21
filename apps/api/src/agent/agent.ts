@@ -45,6 +45,9 @@ export type CreateOptions = {
   persistSnapshot?: (bundle: Uint8Array, commitHash: string, durableN: number) => Promise<void>;
   // Seed context from a prior project (resume); replaces the default [system].
   initialContext?: ContextType;
+  // Fetch the latest codebase snapshot bundle to rehydrate the sandbox on resume, or
+  // null if the project has none (M5b). Called once after the sandbox boots.
+  restoreSnapshot?: () => Promise<Uint8Array | null>;
 };
 
 export class AgentSession {
@@ -94,7 +97,36 @@ export class AgentSession {
     }
     // Fresh session leaves persistedCount at 0, so the system prompt persists too.
     session.log("sandbox_created", { sandboxId: sandbox.sandboxId, template: TEMPLATE });
+    // Resume with files: rehydrate the workspace from the last pushed snapshot, so the
+    // agent (and preview) continue from the actual codebase, not the bare template.
+    if (opts.restoreSnapshot) {
+      const bundle = await opts.restoreSnapshot();
+      if (bundle) await session.restore(bundle);
+    }
     return session;
+  }
+
+  // Rehydrate the workspace from a snapshot bundle (M5b). The sandbox already holds the
+  // baked template repo (same base commit the bundle extends), so we fetch the bundle's
+  // history into it and hard-reset the working tree to the snapshot's HEAD — reusing the
+  // existing .git and node_modules. Then `bun install` reconciles any deps the agent
+  // added since the base (node_modules is gitignored, so it isn't in the bundle).
+  private async restore(bundle: Uint8Array) {
+    try {
+      const bundlePath = "/tmp/restore.bundle";
+      // files.write takes string | ArrayBuffer | Blob | ReadableStream (not a raw
+      // Uint8Array), so wrap the bytes in a Blob.
+      await this.sandbox.files.write(bundlePath, new Blob([bundle]));
+      await this.sandbox.commands.run(
+        `git fetch -q ${bundlePath} HEAD && git reset -q --hard FETCH_HEAD`,
+        { cwd: WORKDIR },
+      );
+      await this.sandbox.commands.run("bun install", { cwd: WORKDIR });
+      this.log("snapshot_restored", { bytes: bundle.length });
+    } catch (e) {
+      // Non-fatal: fall back to the bare template. Log so it's visible in the feed.
+      this.log("snapshot_restore_error", { message: String(e) });
+    }
   }
 
   // Persist the not-yet-saved tail of context. Called at each round boundary (never
