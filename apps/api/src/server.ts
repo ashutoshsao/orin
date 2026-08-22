@@ -1,7 +1,7 @@
 import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { and, desc, eq } from "drizzle-orm";
-import { db, project } from "@repo/db";
+import { and, asc, desc, eq } from "drizzle-orm";
+import { db, message, project } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession, type AgentEvent } from "./agent/agent";
 import { loadContext, messagePersister, snapshotLoader, snapshotPersister } from "./persistence/store";
@@ -79,6 +79,32 @@ export const app = new Elysia()
     }
     return db.select().from(project).where(eq(project.userId, userId)).orderBy(desc(project.updatedAt));
   })
+  // Persisted conversation for a project, ordered — lets the UI replay the transcript on
+  // reopen (agent memory is already restored server-side; this is the visual history).
+  .get(
+    "/projects/:id/messages",
+    async ({ params, request, set }) => {
+      const userId = await getUserId(request);
+      if (!userId) {
+        set.status = 401;
+        return { error: "unauthorized" };
+      }
+      const [proj] = await db
+        .select({ id: project.id })
+        .from(project)
+        .where(and(eq(project.id, params.id), eq(project.userId, userId)))
+        .limit(1);
+      if (!proj) {
+        set.status = 404;
+        return { error: "project_not_found" };
+      }
+      return db
+        .select({ seq: message.seq, role: message.role, content: message.content })
+        .from(message)
+        .where(eq(message.projectId, params.id))
+        .orderBy(asc(message.seq));
+    },
+  )
   .get(
     "/agent/stream",
     async function* ({ query, request }) {

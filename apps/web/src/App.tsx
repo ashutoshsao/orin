@@ -127,6 +127,29 @@ function describe(e: AgentEvent): string {
   }
 }
 
+// A persisted conversation message (from GET /projects/:id/messages).
+type StoredMessage = { seq: number; role: string; content: unknown }
+
+// Map persisted messages to the same event shape the live feed renders, so reopening a
+// project replays its transcript. Skips system + raw tool results (noise); the agent's
+// memory is restored server-side regardless — this is just the visual history.
+function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
+  const out: AgentEvent[] = []
+  for (const m of messages) {
+    if (m.role === 'user') {
+      out.push({ event: 'run_start', userPrompt: String(m.content) })
+    } else if (m.role === 'assistant') {
+      if (typeof m.content === 'string') {
+        out.push({ event: 'final', content: m.content })
+      } else {
+        const calls = (m.content as { toolCalls?: { name: string }[] })?.toolCalls ?? []
+        if (calls.length) out.push({ event: 'tool_call', tools: calls.map((t) => ({ name: t.name, ok: true })) })
+      }
+    }
+  }
+  return out
+}
+
 function Builder({ project, firstPrompt, onBack }: { project: Project; firstPrompt?: string; onBack: () => void }) {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -135,6 +158,23 @@ function Builder({ project, firstPrompt, onBack }: { project: Project; firstProm
   const [followUp, setFollowUp] = useState('')
   const [answer, setAnswer] = useState('')
   const esRef = useRef<EventSource | null>(null)
+
+  // On open, replay the persisted transcript (nothing for a brand-new project) ahead of
+  // any live events. Skipped when we're starting a fresh build (firstPrompt present).
+  useEffect(() => {
+    if (firstPrompt) return
+    let cancelled = false
+    fetch(`${API}/projects/${project.id}/messages`, { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((messages: StoredMessage[]) => {
+        if (!cancelled && Array.isArray(messages)) {
+          const history = historyToEvents(messages)
+          if (history.length) setEvents((prev) => [...history, ...prev])
+        }
+      })
+      .catch(() => { /* history is best-effort */ })
+    return () => { cancelled = true }
+  }, [project.id, firstPrompt])
 
   useEffect(() => {
     const url = `${API}/agent/stream?projectId=${project.id}${firstPrompt ? `&prompt=${encodeURIComponent(firstPrompt)}` : ''}`
