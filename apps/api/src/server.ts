@@ -4,7 +4,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { db, message, project } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession, type AgentEvent } from "./agent/agent";
-import { loadContext, messagePersister, snapshotLoader, snapshotPersister } from "./persistence/store";
+import { durablePersister, loadContext, messagePersister, snapshotLoader, snapshotPersister } from "./persistence/store";
 import { auth } from "./auth";
 
 const PORT = 4000;
@@ -138,6 +138,7 @@ export const app = new Elysia()
             onEvent: (e) => queue.push(e),
             persist: messagePersister(query.projectId),
             persistSnapshot: snapshotPersister(query.projectId, userId),
+            persistDurableN: durablePersister(query.projectId),
             restoreSnapshot: snapshotLoader(query.projectId),
             initialContext,
           });

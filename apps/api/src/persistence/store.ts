@@ -1,5 +1,5 @@
 import { db, message, project } from "@repo/db";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, gte } from "drizzle-orm";
 import type { ContextType, MessageType } from "../agent/types";
 import { r2, snapshotKey } from "./r2";
 
@@ -24,18 +24,29 @@ export function messagePersister(projectId: string) {
 }
 
 // Project-scoped snapshot persister injected into AgentSession. Uploads a git bundle
-// (built + read out of the sandbox by the session) to R2, then advances the project's
-// pointer: the R2 key to restore from, and `durableN` = how many context messages this
-// snapshot covers (the durable-up-to-N clamp marker). Synchronous for now — the Redis
-// queue that makes this non-blocking is a later step.
+// (built + read out of the sandbox) to R2 and points `latestSnapshotKey` at it — the
+// object a fresh sandbox restores from. Synchronous for now; a Redis queue makes it
+// non-blocking later. It deliberately does NOT touch durableCodebaseN — that advances
+// only once context is ALSO persisted (see durablePersister), so the clamp marker never
+// claims a round whose context isn't durable.
 export function snapshotPersister(projectId: string, userId: string) {
-  return async (bundle: Uint8Array, commitHash: string, durableN: number) => {
+  return async (bundle: Uint8Array, commitHash: string) => {
     const key = snapshotKey(userId, projectId, commitHash);
     await r2.write(key, bundle);
     await db
       .update(project)
-      .set({ latestSnapshotKey: key, durableCodebaseN: durableN, updatedAt: new Date() })
+      .set({ latestSnapshotKey: key, updatedAt: new Date() })
       .where(eq(project.id, projectId));
+  };
+}
+
+// Advance the "durable up to N" marker: how many context messages are consistent with
+// the durable codebase. Called after context flush, only when the sandbox's HEAD equals
+// the last pushed commit — so on sandbox-death restore, replayed context never runs
+// ahead of the restorable codebase.
+export function durablePersister(projectId: string) {
+  return async (n: number) => {
+    await db.update(project).set({ durableCodebaseN: n }).where(eq(project.id, projectId));
   };
 }
 
@@ -53,8 +64,21 @@ export function snapshotLoader(projectId: string) {
   };
 }
 
-// Load a project's conversation back into a ContextType for resume.
+// Load a project's conversation back into a ContextType for resume, clamped to the
+// durable-up-to-N marker. If the codebase in R2 lagged context when the sandbox died,
+// rows past N describe rounds whose files can't be restored — so we DELETE them (the
+// agent re-does them) and load only seq < N. This keeps context, the message log, and
+// the restored codebase aligned, and prevents seq collisions when new rounds append.
+// durableCodebaseN is normally the full length (clean close), so nothing is dropped.
 export async function loadContext(projectId: string): Promise<ContextType> {
+  const [proj] = await db
+    .select({ n: project.durableCodebaseN })
+    .from(project)
+    .where(eq(project.id, projectId));
+  const n = proj?.n ?? null;
+  if (n !== null) {
+    await db.delete(message).where(and(eq(message.projectId, projectId), gte(message.seq, n)));
+  }
   const rows = await db
     .select()
     .from(message)
