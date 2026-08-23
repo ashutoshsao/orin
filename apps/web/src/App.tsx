@@ -115,8 +115,8 @@ function describe(e: AgentEvent): string {
   switch (e.event) {
     case 'sandbox_created': return `sandbox up`
     case 'run_start': return `▶ ${String(e.userPrompt ?? '')}`
-    case 'llm_call': return `llm call #${e.iteration} → ${e.status}`
-    case 'tool_call': return `tools #${e.iteration}: ${(e.tools as { name: string; ok: boolean }[] ?? []).map(t => `${t.name}${t.ok ? '✓' : '✗'}`).join(' ')}`
+    case 'llm_call': return `llm call${e.iteration != null ? ` #${e.iteration}` : ''} → ${e.status}`
+    case 'tool_call': return `tools${e.iteration != null ? ` #${e.iteration}` : ''}: ${(e.tools as { name: string; ok: boolean }[] ?? []).map(t => `${t.name}${t.ok ? '✓' : '✗'}`).join(' ')}`
     case 'ask_user': return `❓ ${String(e.question ?? '')}`
     case 'final': return `✓ ${String(e.content ?? '')}`
     case 'preview_ready': return `preview ${e.httpStatus}`
