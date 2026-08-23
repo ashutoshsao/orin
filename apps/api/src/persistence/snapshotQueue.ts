@@ -1,6 +1,6 @@
 import { RedisClient } from "bun";
 import { and, eq, isNull, lt, or } from "drizzle-orm";
-import { db, project } from "@repo/db";
+import { db, project, snapshot } from "@repo/db";
 import { r2, snapshotKey } from "./r2";
 import type { SnapshotJob } from "../agent/agent";
 
@@ -58,6 +58,8 @@ async function handle(fields: Record<string, string>) {
     const key = snapshotKey(fields.userId, projectId, commitHash);
     await r2.write(key, bytes);
     await db.update(project).set({ latestSnapshotKey: key, updatedAt: new Date() }).where(eq(project.id, projectId));
+    // Record this push as a rewind point (M5b rewind).
+    await db.insert(snapshot).values({ projectId, commitHash, n, key });
     lastPushed.set(projectId, commitHash);
     await advanceDurable(projectId, n); // codebase now durable to n
   } else if (kind === "mark") {

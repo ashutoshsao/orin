@@ -22,6 +22,13 @@
       "when": 1789028856704,
       "tag": "0002_loving_korath",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789032427083,
+      "tag": "0003_wakeful_saracen",
+      "breakpoints": true
     }
   ]
 }

@@ -24,6 +24,18 @@ export const project = pgTable("project", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// One pushed codebase snapshot = a rewind point. Written by the snapshot worker per
+// push (M5b): `commitHash` is the git commit, `n` the context length it covers, `key`
+// the R2 bundle. Rewinding to a snapshot restores its bundle and truncates context to n.
+export const snapshot = pgTable("snapshot", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  projectId: text("project_id").notNull().references(() => project.id),
+  commitHash: text("commit_hash").notNull(),
+  n: integer("n").notNull(),
+  key: text("key").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // Durable conversation log — one polymorphic table (role column), tool call/result
 // are rows with the tool name inside `content`. Source of truth for resume.
 export const message = pgTable("message", {
