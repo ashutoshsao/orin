@@ -71,6 +71,10 @@ export async function toolExecution(toolCalls: ToolCall[], ctx: ToolContext) {
   const toolResponses: ToolResultType[] = [];
   for (let i = 0; i < toolCalls.length; i++) {
     switch (toolCalls[i].name) {
+      // The model (DeepSeek) sometimes emits the name "bash" despite the prompt saying
+      // "bash_tool" — accept it as an alias rather than rejecting a valid command and
+      // burning an iteration on an "invalid tool" error.
+      case "bash":
       case "bash_tool": {
         try {
           const command = toolCalls[i].argument.command as string;
@@ -112,7 +116,7 @@ export async function toolExecution(toolCalls: ToolCall[], ctx: ToolContext) {
         toolResponses.push(
           {
             id: toolCalls[i].id,
-            content: `Invalid tool call, tool ${toolCalls[i].id} not execute`,
+            content: `Invalid tool call: unknown tool "${toolCalls[i].name}"`,
             ok: false
           }
         )
