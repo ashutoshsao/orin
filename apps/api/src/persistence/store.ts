@@ -1,7 +1,7 @@
 import { db, message, project } from "@repo/db";
 import { and, asc, eq, gte } from "drizzle-orm";
 import type { ContextType, MessageType } from "../agent/types";
-import { r2, snapshotKey } from "./r2";
+import { r2 } from "./r2";
 
 // A message row = one MessageType: role + jsonb content (string for user/system,
 // ToolCallsType for an assistant tool call, ToolResultType[] for a tool result).
@@ -23,32 +23,8 @@ export function messagePersister(projectId: string) {
   };
 }
 
-// Project-scoped snapshot persister injected into AgentSession. Uploads a git bundle
-// (built + read out of the sandbox) to R2 and points `latestSnapshotKey` at it — the
-// object a fresh sandbox restores from. Synchronous for now; a Redis queue makes it
-// non-blocking later. It deliberately does NOT touch durableCodebaseN — that advances
-// only once context is ALSO persisted (see durablePersister), so the clamp marker never
-// claims a round whose context isn't durable.
-export function snapshotPersister(projectId: string, userId: string) {
-  return async (bundle: Uint8Array, commitHash: string) => {
-    const key = snapshotKey(userId, projectId, commitHash);
-    await r2.write(key, bundle);
-    await db
-      .update(project)
-      .set({ latestSnapshotKey: key, updatedAt: new Date() })
-      .where(eq(project.id, projectId));
-  };
-}
-
-// Advance the "durable up to N" marker: how many context messages are consistent with
-// the durable codebase. Called after context flush, only when the sandbox's HEAD equals
-// the last pushed commit — so on sandbox-death restore, replayed context never runs
-// ahead of the restorable codebase.
-export function durablePersister(projectId: string) {
-  return async (n: number) => {
-    await db.update(project).set({ durableCodebaseN: n }).where(eq(project.id, projectId));
-  };
-}
+// The R2 push + latestSnapshotKey/durableCodebaseN updates now live in the background
+// worker (snapshotQueue.ts), off the agent's hot path.
 
 // Fetch the latest codebase bundle for a project from R2, or null if it has none
 // (new project, or nothing pushed yet). Injected into AgentSession to rehydrate the

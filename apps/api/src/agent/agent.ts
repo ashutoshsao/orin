@@ -34,18 +34,23 @@ export type AgentEvent = {
   [key: string]: unknown;
 };
 
+// One round's codebase snapshot handed to the queue. `push` = files changed (carries the
+// bundle bytes + commit); `mark` = no file change this round (lets the durable marker
+// advance in order without an R2 write). `n` is the context length the round covers.
+export type SnapshotJob =
+  | { kind: "push"; commitHash: string; bundle: Uint8Array; n: number }
+  | { kind: "mark"; commitHash: string; n: number };
+
 // How a session receives events and persists messages, plus an optional context to
 // resume from. Passed to `create` — keeps the loop unaware of HTTP and the DB.
 export type CreateOptions = {
   onEvent?: (event: AgentEvent) => void;
   // Persist a batch of newly-appended messages; `startSeq` is their index in context.
   persist?: (messages: MessageType[], startSeq: number) => Promise<void>;
-  // Persist a per-round codebase snapshot (git bundle bytes + commit hash) to durable
-  // storage (points latestSnapshotKey at it). Injected like `persist` (M5b).
-  persistSnapshot?: (bundle: Uint8Array, commitHash: string) => Promise<void>;
-  // Advance the durable-up-to-N marker after a round's context is persisted AND its
-  // codebase is durable — the clamp used on sandbox-death resume (M5b step 5).
-  persistDurableN?: (n: number) => Promise<void>;
+  // Enqueue a per-round codebase snapshot for the background worker to push to R2
+  // off the hot path (M5b). `push` carries the bundle; `mark` records a no-op round so
+  // the durable marker can still advance. The worker owns durableCodebaseN.
+  enqueueSnapshot?: (job: SnapshotJob) => Promise<void>;
   // Seed context from a prior project (resume); replaces the default [system].
   initialContext?: ContextType;
   // Fetch the latest codebase snapshot bundle to rehydrate the sandbox on resume, or
@@ -67,15 +72,9 @@ export class AgentSession {
   private pendingQuestions = new Map<string, (answer: string) => void>();
   // How many context messages are already persisted, so flush() only writes the tail.
   private persistedCount = 0;
-  // Latest per-round git commit in the sandbox (M5b). null until the first snapshot.
+  // Latest per-round git commit in the sandbox (M5b). null until the first snapshot;
+  // used as the commit a `mark` (no-op round) refers to. The worker owns durability.
   private latestCommit: string | null = null;
-  // The commit whose bundle is durably in R2. The codebase is "consistent" (safe to
-  // advance the durable-N marker) only when HEAD == this — i.e. no committed-but-unpushed
-  // round is outstanding. Seeded on restore to the snapshot we rehydrated from.
-  private lastPushedCommit: string | null = null;
-  private get codebaseConsistent(): boolean {
-    return this.latestCommit === this.lastPushedCommit;
-  }
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -84,8 +83,7 @@ export class AgentSession {
     private sandbox: Sandbox,
     private onEvent?: (event: AgentEvent) => void,
     private persist?: (messages: MessageType[], startSeq: number) => Promise<void>,
-    private persistSnapshot?: (bundle: Uint8Array, commitHash: string) => Promise<void>,
-    private persistDurableN?: (n: number) => Promise<void>,
+    private enqueueSnapshot?: (job: SnapshotJob) => Promise<void>,
   ) {
     this.sessionId = crypto.randomUUID();
     this.context = [
@@ -98,7 +96,7 @@ export class AgentSession {
   // `onEvent`/`persist` are how transports/DB tap in; `initialContext` resumes a project.
   static async create(llmProvider: LLMProvider, opts: CreateOptions = {}) {
     const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS });
-    const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist, opts.persistSnapshot, opts.persistDurableN);
+    const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist, opts.enqueueSnapshot);
     if (opts.initialContext && opts.initialContext.length > 0) {
       // Resume: loaded messages (incl. the original system prompt) are already
       // persisted, so start the tail after them.
@@ -132,11 +130,10 @@ export class AgentSession {
         { cwd: WORKDIR },
       );
       await this.sandbox.commands.run("bun install", { cwd: WORKDIR });
-      // HEAD now equals the snapshot we restored from — which is durably in R2. Seed both
-      // so the session starts codebase-consistent (durable-N can advance from here).
+      // HEAD now equals the snapshot we restored from; seed latestCommit so a no-op first
+      // round can `mark` against it. durableCodebaseN in the DB already reflects this point.
       const head = reset.stdout.trim();
       this.latestCommit = head;
-      this.lastPushedCommit = head;
       this.log("snapshot_restored", { bytes: bundle.length, commit: head });
     } catch (e) {
       // Non-fatal: fall back to the bare template. Log so it's visible in the feed.
@@ -159,16 +156,15 @@ export class AgentSession {
     }
   }
 
-  // Snapshot the workspace as one round's git commit (M5b). Returns the new commit
-  // hash, or null if the round changed no files (e.g. an ask_user or final-only
-  // round — git has nothing to commit). Called at each round boundary BEFORE flush()
-  // so the ordering is codebase-first, context-second: a crash between the two leaves
-  // the codebase AHEAD of context (safe/recoverable), never behind. Best-effort — a
-  // git hiccup is logged, not thrown, so it can never block context persistence.
-  private async snapshot(): Promise<string | null> {
+  // Snapshot the workspace as one round's git commit and build its bundle (M5b). Returns
+  // { hash, bundle } when files changed, or null for a no-op round (ask_user / final-only
+  // — git has nothing to commit). Builds a FULL, self-contained bundle (all history from
+  // HEAD) so restore is a single clone and rewind stays possible. Best-effort: a git
+  // hiccup is logged, not thrown, so it can never block context persistence.
+  private async snapshot(): Promise<{ hash: string; bundle: Uint8Array } | null> {
     try {
-      // Stage everything, then commit only if the index actually changed; echo a
-      // sentinel when it didn't so we can tell "new snapshot" from "nothing to do".
+      // Stage everything, commit only if the index changed; echo a sentinel otherwise so
+      // we can tell a new commit from a no-op round.
       const res = await this.sandbox.commands.run(
         'git add -A; if git diff --cached --quiet; then echo NOCHANGE; else git commit -q -m "round" && git rev-parse HEAD; fi',
         { cwd: WORKDIR },
@@ -176,46 +172,32 @@ export class AgentSession {
       const out = res.stdout.trim();
       if (out === "NOCHANGE" || out === "") return null;
       this.latestCommit = out;
-      this.log("snapshot", { commit: out });
-      await this.pushSnapshot(out);
-      return out;
+      const bundlePath = `/tmp/${out}.bundle`;
+      await this.sandbox.commands.run(`git bundle create ${bundlePath} HEAD`, { cwd: WORKDIR });
+      const bundle = await this.sandbox.files.read(bundlePath, { format: "bytes" });
+      this.log("snapshot", { commit: out, bytes: bundle.length });
+      return { hash: out, bundle };
     } catch (e) {
       this.log("snapshot_error", { message: String(e) });
       return null;
     }
   }
 
-  // Push the round's snapshot to durable storage (R2), if a sink is injected. Builds a
-  // FULL, self-contained git bundle (all history reachable from HEAD) so restore is a
-  // single clone — history travels with it, keeping rewind possible. On success, HEAD is
-  // now durably in R2, so `lastPushedCommit` catches up to it (→ codebaseConsistent). On
-  // failure it stays behind, so the durable-N marker won't advance past this round.
-  // Best-effort and synchronous for now; a Redis queue makes it non-blocking later.
-  private async pushSnapshot(commitHash: string) {
-    if (!this.persistSnapshot) return;
+  // Hand the round to the snapshot queue (non-blocking). Called AFTER flush() so context
+  // is already durable: a crash before enqueue just leaves the round un-pushed → the
+  // clamp discards it on resume (safe). A `push` carries the bundle for the worker to send
+  // to R2; a no-op round enqueues a `mark` so the durable marker can still advance in
+  // order (the worker only honours it if HEAD is durably pushed).
+  private async enqueueRound(snap: { hash: string; bundle: Uint8Array } | null) {
+    if (!this.enqueueSnapshot) return;
     try {
-      const bundlePath = `/tmp/${commitHash}.bundle`;
-      await this.sandbox.commands.run(`git bundle create ${bundlePath} HEAD`, { cwd: WORKDIR });
-      const bundle = await this.sandbox.files.read(bundlePath, { format: "bytes" });
-      await this.persistSnapshot(bundle, commitHash);
-      this.lastPushedCommit = commitHash;
-      this.log("snapshot_pushed", { commit: commitHash, bytes: bundle.length });
+      if (snap) {
+        await this.enqueueSnapshot({ kind: "push", commitHash: snap.hash, bundle: snap.bundle, n: this.persistedCount });
+      } else if (this.latestCommit) {
+        await this.enqueueSnapshot({ kind: "mark", commitHash: this.latestCommit, n: this.persistedCount });
+      }
     } catch (e) {
-      this.log("snapshot_push_error", { commit: commitHash, message: String(e) });
-    }
-  }
-
-  // Advance the durable-up-to-N marker, called AFTER flush() so both codebase (R2) and
-  // context (Postgres) are durable to this point. Only advances when HEAD is durable
-  // (no committed-but-unpushed round outstanding) — otherwise a crash could restore a
-  // codebase behind the replayed context (the dangerous direction). No-op file rounds
-  // still advance it (HEAD unchanged == lastPushed), so trailing text isn't dropped.
-  private async persistDurable() {
-    if (!this.persistDurableN || !this.codebaseConsistent) return;
-    try {
-      await this.persistDurableN(this.persistedCount);
-    } catch (e) {
-      this.log("durable_error", { message: String(e) });
+      this.log("enqueue_error", { message: String(e) });
     }
   }
 
@@ -265,12 +247,6 @@ export class AgentSession {
   // Stable id for the session registry / routing follow-up POSTs to this session.
   get id() {
     return this.sessionId;
-  }
-
-  // Latest per-round snapshot commit (M5b). The R2 push (step 3) bundles the delta
-  // from the last-pushed hash up to this.
-  get lastCommit(): string | null {
-    return this.latestCommit;
   }
 
   // Submit a prompt (initial or follow-up). If a turn is already running, the
@@ -338,9 +314,9 @@ export class AgentSession {
 
         this.context.push({ role: "assistant", content: response.content });
         this.log("final", { iteration: start, content: response.content });
-        await this.snapshot();
+        const snap = await this.snapshot();
         await this.flush();
-        await this.persistDurable();
+        await this.enqueueRound(snap);
         break;
 
       } else if (response.status === "toolCall") {
@@ -367,11 +343,11 @@ export class AgentSession {
         })
 
         // Round complete (assistant tool_calls + tool results both appended). Snapshot
-        // the files this round wrote (codebase-first), persist the context rows, then
-        // advance the durable-N marker (only if the codebase is durable to here).
-        await this.snapshot();
+        // the files this round wrote, persist the context rows, then hand the round to the
+        // snapshot queue (the worker pushes to R2 and advances the durable-N marker).
+        const snap = await this.snapshot();
         await this.flush();
-        await this.persistDurable();
+        await this.enqueueRound(snap);
 
       } else if (response.status === "error") {
         this.log("error", { iteration: start, content: response.content });
