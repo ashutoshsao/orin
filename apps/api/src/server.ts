@@ -1,7 +1,7 @@
 import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { and, asc, desc, eq } from "drizzle-orm";
-import { db, message, project } from "@repo/db";
+import { and, asc, desc, eq, gt, gte } from "drizzle-orm";
+import { db, message, project, snapshot } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession, type AgentEvent } from "./agent/agent";
 import { loadContext, messagePersister, snapshotLoader } from "./persistence/store";
@@ -105,6 +105,57 @@ export const app = new Elysia()
         .where(eq(message.projectId, params.id))
         .orderBy(asc(message.seq));
     },
+  )
+  // Rewind points for a project — each pushed snapshot, oldest first.
+  .get(
+    "/projects/:id/snapshots",
+    async ({ params, request, set }) => {
+      const userId = await getUserId(request);
+      if (!userId) { set.status = 401; return { error: "unauthorized" }; }
+      const [proj] = await db
+        .select({ id: project.id })
+        .from(project)
+        .where(and(eq(project.id, params.id), eq(project.userId, userId)))
+        .limit(1);
+      if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+      return db
+        .select({ id: snapshot.id, commitHash: snapshot.commitHash, n: snapshot.n, createdAt: snapshot.createdAt })
+        .from(snapshot)
+        .where(eq(snapshot.projectId, params.id))
+        .orderBy(asc(snapshot.n));
+    },
+  )
+  // Rewind a project to a chosen snapshot: point it at that snapshot's bundle, discard
+  // the conversation and snapshots past it (the abandoned branch), so the next reopen
+  // restores that codebase + the clamped context. The client should reopen afterwards
+  // (a stale live session, if any, is harmless — it's torn down on disconnect).
+  .post(
+    "/projects/:id/rewind",
+    async ({ params, body, request, set }) => {
+      const userId = await getUserId(request);
+      if (!userId) { set.status = 401; return { error: "unauthorized" }; }
+      const [proj] = await db
+        .select({ id: project.id })
+        .from(project)
+        .where(and(eq(project.id, params.id), eq(project.userId, userId)))
+        .limit(1);
+      if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+      const [snap] = await db
+        .select()
+        .from(snapshot)
+        .where(and(eq(snapshot.id, body.snapshotId), eq(snapshot.projectId, params.id)))
+        .limit(1);
+      if (!snap) { set.status = 404; return { error: "snapshot_not_found" }; }
+
+      await db
+        .update(project)
+        .set({ latestSnapshotKey: snap.key, durableCodebaseN: snap.n, updatedAt: new Date() })
+        .where(eq(project.id, params.id));
+      await db.delete(message).where(and(eq(message.projectId, params.id), gte(message.seq, snap.n)));
+      await db.delete(snapshot).where(and(eq(snapshot.projectId, params.id), gt(snapshot.n, snap.n)));
+      return { ok: true, n: snap.n };
+    },
+    { body: t.Object({ snapshotId: t.String() }) },
   )
   .get(
     "/agent/stream",
