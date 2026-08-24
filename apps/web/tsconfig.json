@@ -5,6 +5,7 @@
     "strictNullChecks": true,
     "jsx": "react-jsx",
     "types": ["vite/client"],
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "paths": { "@/*": ["./src/*"] }
   }
 }
