@@ -1,328 +1,40 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { authClient } from './authClient'
+import { Toaster } from '@/components/ui/sonner'
+import { AuthScreen } from '@/screens/AuthScreen'
+import { ProjectsScreen } from '@/screens/ProjectsScreen'
+import { Builder } from '@/screens/Builder'
+import type { Project } from '@/lib/api'
 
-const API = 'http://localhost:4000'
+// shadcn's dark tokens key off a `.dark` class, so follow the OS setting rather than
+// shipping a toggle — one less control, and it matches whatever the user already chose.
+function useSystemTheme() {
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const apply = () => document.documentElement.classList.toggle('dark', mq.matches)
+    apply()
+    mq.addEventListener('change', apply)
+    return () => mq.removeEventListener('change', apply)
+  }, [])
+}
 
-type Project = { id: string; name: string; createdAt: string }
-
-// ─────────────────────────────────────────── App shell: auth gate → projects → builder
 export default function App() {
+  useSystemTheme()
   const { data: session, isPending } = authClient.useSession()
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
 
-  if (isPending) return <Centered>loading…</Centered>
-  if (!session) return <AuthScreen />
-  if (!active) return <ProjectsScreen onOpen={(project, firstPrompt) => setActive({ project, firstPrompt })} />
-  return <Builder {...active} onBack={() => setActive(null)} />
-}
-
-// ─────────────────────────────────────────────────────────────────────── Sign in / up
-function AuthScreen() {
-  const [mode, setMode] = useState<'in' | 'up'>('in')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [name, setName] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setBusy(true); setError(null)
-    const res = mode === 'in'
-      ? await authClient.signIn.email({ email, password })
-      : await authClient.signUp.email({ email, password, name })
-    setBusy(false)
-    if (res.error) setError(res.error.message ?? 'Something went wrong')
-  }
-
   return (
-    <Centered>
-      <form onSubmit={submit} style={{ display: 'grid', gap: 8, width: 300 }}>
-        <h1 style={{ fontSize: 20, margin: '0 0 4px' }}>Orin</h1>
-        {mode === 'up' && (
-          <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} style={inp} />
-        )}
-        <input placeholder="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} style={inp} />
-        <input placeholder="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={inp} />
-        <button disabled={busy} type="submit">{mode === 'in' ? 'Sign in' : 'Sign up'}</button>
-        {error && <div style={{ color: '#c00', fontSize: 13 }}>{error}</div>}
-        <button type="button" onClick={() => { setMode(mode === 'in' ? 'up' : 'in'); setError(null) }} style={linkBtn}>
-          {mode === 'in' ? 'Need an account? Sign up' : 'Have an account? Sign in'}
-        </button>
-      </form>
-    </Centered>
+    <>
+      {isPending ? (
+        <div className="grid min-h-dvh place-items-center bg-background" />
+      ) : !session ? (
+        <AuthScreen />
+      ) : !active ? (
+        <ProjectsScreen onOpen={(project, firstPrompt) => setActive({ project, firstPrompt })} />
+      ) : (
+        <Builder {...active} onBack={() => setActive(null)} />
+      )}
+      <Toaster />
+    </>
   )
-}
-
-// ────────────────────────────────────────────────────────────────────── Projects list
-function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: string) => void }) {
-  const [projects, setProjects] = useState<Project[]>([])
-  const [prompt, setPrompt] = useState('build me a todo app')
-
-  async function refresh() {
-    const res = await fetch(`${API}/projects`, { credentials: 'include' })
-    if (res.ok) setProjects(await res.json())
-  }
-  useEffect(() => { refresh() }, [])
-
-  async function create() {
-    const name = prompt.slice(0, 60) || 'Untitled'
-    const res = await fetch(`${API}/projects`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
-    })
-    if (res.ok) onOpen(await res.json(), prompt) // hand off to builder with the first prompt
-  }
-
-  return (
-    <div style={{ maxWidth: 640, margin: '40px auto', padding: 16 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1 style={{ fontSize: 20 }}>Your projects</h1>
-        <button onClick={() => authClient.signOut()} style={linkBtn}>Sign out</button>
-      </div>
-
-      <div style={{ display: 'flex', gap: 8, margin: '16px 0' }}>
-        <input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="describe an app to build…" style={{ ...inp, flex: 1 }} />
-        <button onClick={create} disabled={!prompt.trim()}>New build</button>
-      </div>
-
-      <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: 8 }}>
-        {projects.map((p) => (
-          <li key={p.id}>
-            <button onClick={() => onOpen(p)} style={{ width: '100%', textAlign: 'left', padding: 12, border: '1px solid #ddd', borderRadius: 8, background: '#fff', cursor: 'pointer' }}>
-              <div style={{ fontWeight: 600 }}>{p.name}</div>
-              <div style={{ color: '#999', fontSize: 12 }}>{new Date(p.createdAt).toLocaleString()}</div>
-            </button>
-          </li>
-        ))}
-        {projects.length === 0 && <li style={{ color: '#999' }}>No projects yet — start a build above.</li>}
-      </ul>
-    </div>
-  )
-}
-
-// ───────────────────────────────────────────────────────────────────────────── Builder
-type AgentEvent = {
-  event: string; sessionId?: string; iteration?: number; status?: string
-  content?: unknown; url?: string; httpStatus?: string; callId?: string
-  question?: string; options?: string[]; [k: string]: unknown
-}
-type Pending = { callId: string; question: string; options: string[] }
-
-function describe(e: AgentEvent): string {
-  switch (e.event) {
-    case 'sandbox_created': return `sandbox up`
-    case 'run_start': return `▶ ${String(e.userPrompt ?? '')}`
-    case 'llm_call': return `llm call${e.iteration != null ? ` #${e.iteration}` : ''} → ${e.status}`
-    case 'tool_call': return `tools${e.iteration != null ? ` #${e.iteration}` : ''}: ${(e.tools as { name: string; ok: boolean }[] ?? []).map(t => `${t.name}${t.ok ? '✓' : '✗'}`).join(' ')}`
-    case 'ask_user': return `❓ ${String(e.question ?? '')}`
-    case 'final': return `✓ ${String(e.content ?? '')}`
-    case 'preview_ready': return `preview ${e.httpStatus}`
-    case 'unauthorized': return 'not signed in'
-    case 'project_not_found': return 'project not found'
-    case 'stream_error': return `error: ${String(e.message ?? '')}`
-    default: return e.event
-  }
-}
-
-// A persisted conversation message (from GET /projects/:id/messages).
-type StoredMessage = { seq: number; role: string; content: unknown }
-
-// A rewind point (from GET /projects/:id/snapshots): one pushed codebase snapshot.
-type Snap = { id: string; commitHash: string; n: number; createdAt: string }
-
-// Map persisted messages to the same event shape the live feed renders, so reopening a
-// project replays its transcript. Skips system + raw tool results (noise); the agent's
-// memory is restored server-side regardless — this is just the visual history.
-function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
-  const out: AgentEvent[] = []
-  for (const m of messages) {
-    if (m.role === 'user') {
-      out.push({ event: 'run_start', userPrompt: String(m.content) })
-    } else if (m.role === 'assistant') {
-      if (typeof m.content === 'string') {
-        out.push({ event: 'final', content: m.content })
-      } else {
-        const calls = (m.content as { toolCalls?: { name: string }[] })?.toolCalls ?? []
-        if (calls.length) out.push({ event: 'tool_call', tools: calls.map((t) => ({ name: t.name, ok: true })) })
-      }
-    }
-  }
-  return out
-}
-
-function Builder({ project, firstPrompt, onBack }: { project: Project; firstPrompt?: string; onBack: () => void }) {
-  const [events, setEvents] = useState<AgentEvent[]>([])
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [sessionId, setSessionId] = useState<string | null>(null)
-  const [pending, setPending] = useState<Pending | null>(null)
-  const [followUp, setFollowUp] = useState('')
-  const [answer, setAnswer] = useState('')
-  const [snapshots, setSnapshots] = useState<Snap[]>([])
-  const [showHistory, setShowHistory] = useState(false)
-  // Bumped after a rewind to re-open the project at the rewound state (re-fetch the
-  // transcript + reconnect the stream). The first prompt only applies to the first mount.
-  const [reloadKey, setReloadKey] = useState(0)
-  const esRef = useRef<EventSource | null>(null)
-  const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
-
-  // Rewind points, refreshed on open and whenever a run finishes.
-  const refreshSnapshots = () => {
-    fetch(`${API}/projects/${project.id}/snapshots`, { credentials: 'include' })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((rows: Snap[]) => Array.isArray(rows) && setSnapshots(rows))
-      .catch(() => { /* best-effort */ })
-  }
-  useEffect(refreshSnapshots, [project.id, reloadKey])
-
-  // Roll the project back to a snapshot, then reopen it there: the server truncates the
-  // conversation past that point and repoints the codebase, so the fresh session restores
-  // the older files + clamped history.
-  async function rewindTo(snap: Snap) {
-    if (!confirm(`Rewind to this point? Everything after it (conversation + code changes) is discarded.`)) return
-    const res = await fetch(`${API}/projects/${project.id}/rewind`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ snapshotId: snap.id }),
-    })
-    if (!res.ok) return
-    esRef.current?.close()
-    setEvents([]); setPreviewUrl(null); setSessionId(null); setPending(null); setShowHistory(false)
-    setReloadKey((k) => k + 1)
-  }
-
-  // On open, replay the persisted transcript (nothing for a brand-new project) ahead of
-  // any live events. Skipped when we're starting a fresh build (firstPrompt present).
-  useEffect(() => {
-    if (effectivePrompt) return
-    let cancelled = false
-    fetch(`${API}/projects/${project.id}/messages`, { credentials: 'include' })
-      .then((res) => (res.ok ? res.json() : []))
-      .then((messages: StoredMessage[]) => {
-        if (!cancelled && Array.isArray(messages)) {
-          const history = historyToEvents(messages)
-          if (history.length) setEvents((prev) => [...history, ...prev])
-        }
-      })
-      .catch(() => { /* history is best-effort */ })
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, reloadKey])
-
-  useEffect(() => {
-    const url = `${API}/agent/stream?projectId=${project.id}${effectivePrompt ? `&prompt=${encodeURIComponent(effectivePrompt)}` : ''}`
-    const es = new EventSource(url, { withCredentials: true }) // sends the auth cookie
-    esRef.current = es
-    es.onmessage = (msg) => {
-      const e: AgentEvent = JSON.parse(msg.data)
-      if (e.event === 'ping') return
-      if (e.sessionId) setSessionId((prev) => prev ?? e.sessionId!)
-      setEvents((prev) => [...prev, e])
-      if (e.event === 'preview_ready' && typeof e.url === 'string') setPreviewUrl(e.url)
-      if (e.event === 'ask_user' && e.callId && e.question != null) {
-        setPending({ callId: e.callId, question: e.question, options: e.options ?? [] })
-      }
-      if (e.event === 'final') refreshSnapshots() // a run finished — new rewind points
-    }
-    es.onerror = () => { /* connection ended */ }
-    return () => es.close() // leaving the builder disconnects → server tears the sandbox down
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, reloadKey])
-
-  function sendFollowUp() {
-    if (!sessionId || !followUp.trim()) return
-    fetch(`${API}/agent/${sessionId}/message`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt: followUp }),
-    })
-    setFollowUp('')
-  }
-  function submitAnswer(value: string) {
-    if (!sessionId || !pending || !value.trim()) return
-    fetch(`${API}/agent/${sessionId}/answer`, {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ callId: pending.callId, answer: value }),
-    })
-    setPending(null); setAnswer('')
-  }
-
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '440px 1fr', height: '100vh', font: '14px system-ui' }}>
-      <aside style={{ borderRight: '1px solid #ddd', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-        <div style={{ padding: 12, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <strong>{project.name}</strong>
-          <div style={{ display: 'flex', gap: 12 }}>
-            {snapshots.length > 0 && (
-              <button onClick={() => setShowHistory((v) => !v)} style={linkBtn}>
-                {showHistory ? 'hide history' : `history (${snapshots.length})`}
-              </button>
-            )}
-            <button onClick={onBack} style={linkBtn}>← projects</button>
-          </div>
-        </div>
-        {showHistory && (
-          <div style={{ borderBottom: '1px solid #eee', padding: 12, maxHeight: 220, overflowY: 'auto', background: '#fafafa' }}>
-            <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
-              Rewind to an earlier point — the code and conversation after it are discarded.
-            </div>
-            <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 6 }}>
-              {snapshots.map((snap, i) => (
-                <li key={snap.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                  <span style={{ fontFamily: 'ui-monospace, monospace', color: '#555' }}>
-                    #{i + 1} {snap.commitHash.slice(0, 7)} · {new Date(snap.createdAt).toLocaleTimeString()}
-                  </span>
-                  <button onClick={() => rewindTo(snap)} disabled={i === snapshots.length - 1}>
-                    {i === snapshots.length - 1 ? 'current' : 'rewind here'}
-                  </button>
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
-        <ol style={{ margin: 0, padding: 12, overflowY: 'auto', flex: 1, listStyle: 'none', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
-          {events.map((e, i) => (
-            <li key={i} style={{ padding: '3px 0', borderBottom: '1px solid #f2f2f2', whiteSpace: 'pre-wrap' }}>
-              <span style={{ color: '#999' }}>{e.event}</span>  {describe(e)}
-            </li>
-          ))}
-        </ol>
-        <div style={{ borderTop: '1px solid #eee', padding: 12 }}>
-          {pending ? (
-            <div>
-              <div style={{ marginBottom: 8, fontWeight: 600 }}>❓ {pending.question}</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                {pending.options.map((opt) => <button key={opt} onClick={() => submitAnswer(opt)}>{opt}</button>)}
-              </div>
-              <form onSubmit={(ev) => { ev.preventDefault(); submitAnswer(answer) }} style={{ display: 'flex', gap: 8 }}>
-                <input value={answer} onChange={(e) => setAnswer(e.target.value)} placeholder="or type your own…" style={{ ...inp, flex: 1 }} autoFocus />
-                <button type="submit" disabled={!answer.trim()}>Send</button>
-              </form>
-            </div>
-          ) : (
-            <form onSubmit={(ev) => { ev.preventDefault(); sendFollowUp() }} style={{ display: 'flex', gap: 8 }}>
-              <input value={followUp} onChange={(e) => setFollowUp(e.target.value)} placeholder="follow-up: e.g. add dark mode…" style={{ ...inp, flex: 1 }} />
-              <button type="submit" disabled={!followUp.trim()}>Send</button>
-            </form>
-          )}
-        </div>
-      </aside>
-      <main style={{ minWidth: 0 }}>
-        {previewUrl
-          ? <iframe src={previewUrl} title="preview" style={{ width: '100%', height: '100%', border: 0 }} />
-          : <Centered>building…</Centered>}
-      </main>
-    </div>
-  )
-}
-
-// ───────────────────────────────────────────────────────────────────────────── shared
-const inp: React.CSSProperties = { font: 'inherit', padding: 8, border: '1px solid #ccc', borderRadius: 6 }
-const linkBtn: React.CSSProperties = { border: 'none', background: 'none', color: '#06c', cursor: 'pointer', padding: 0, font: 'inherit' }
-
-function Centered({ children }: { children: React.ReactNode }) {
-  return <div style={{ display: 'grid', placeItems: 'center', height: '100vh', color: '#666', font: '14px system-ui' }}>{children}</div>
 }

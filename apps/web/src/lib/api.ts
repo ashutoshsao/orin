@@ -1,0 +1,71 @@
+// Server contract + shared shapes for the builder UI.
+export const API = 'http://localhost:4000'
+
+export type Project = { id: string; name: string; createdAt: string }
+
+// One structured agent event off the SSE stream.
+export type AgentEvent = {
+  event: string; sessionId?: string; iteration?: number; status?: string
+  content?: unknown; url?: string; httpStatus?: string; callId?: string
+  question?: string; options?: string[]; [k: string]: unknown
+}
+
+export type Pending = { callId: string; question: string; options: string[] }
+
+// A persisted conversation message (GET /projects/:id/messages).
+export type StoredMessage = { seq: number; role: string; content: unknown }
+
+// A rewind point (GET /projects/:id/snapshots): one pushed codebase snapshot.
+export type Snap = { id: string; commitHash: string; n: number; createdAt: string }
+
+// Every call carries the session cookie (the API is a separate origin).
+export const authed: RequestInit = { credentials: 'include' }
+
+export async function postJSON(path: string, body: unknown) {
+  return fetch(`${API}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}
+
+export async function getJSON<T>(path: string, fallback: T): Promise<T> {
+  try {
+    const res = await fetch(`${API}${path}`, authed)
+    return res.ok ? ((await res.json()) as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+// Map persisted messages to feed events so reopening replays the transcript. Skips
+// system + raw tool results (noise); agent memory is restored server-side regardless.
+export function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
+  const out: AgentEvent[] = []
+  for (const m of messages) {
+    if (m.role === 'user') {
+      out.push({ event: 'run_start', userPrompt: String(m.content) })
+    } else if (m.role === 'assistant') {
+      if (typeof m.content === 'string') {
+        out.push({ event: 'final', content: m.content })
+      } else {
+        const calls = (m.content as { toolCalls?: { name: string }[] })?.toolCalls ?? []
+        if (calls.length) out.push({ event: 'tool_call', tools: calls.map((t) => ({ name: t.name, ok: true })) })
+      }
+    }
+  }
+  return out
+}
+
+// Relative time, for timestamps that should read as prose rather than data.
+export function timeAgo(iso: string): string {
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
+  if (secs < 60) return 'just now'
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return days === 1 ? 'yesterday' : `${days}d ago`
+}
