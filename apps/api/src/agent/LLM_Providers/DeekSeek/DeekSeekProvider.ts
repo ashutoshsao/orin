@@ -1,7 +1,6 @@
 import OpenAI from "openai";
-import { tools } from "./tool";
-import { effortType, llmResponseType } from "../../types";
-import { contextType } from "../../context";
+import { tools } from "../../tool";
+import { ContextType, EffortType, LLMResponseType } from "../../types";
 
 const openai = new OpenAI({
   baseURL: "https://api.deepseek.com",
@@ -10,14 +9,14 @@ const openai = new OpenAI({
 
 export class DeepSeekProvider {
   model: string
-  effort: string
+  effort: EffortType
 
-  constructor(model: string, effort: effortType) {
+  constructor(model: string, effort: EffortType) {
     this.model = model;
     this.effort = effort;
   }
 
-  async call_LLM(context: contextType): Promise<llmResponseType> {
+  async callLLM(context: ContextType): Promise<LLMResponseType> {
     // two return types 
     try {
       //llm call
@@ -35,7 +34,7 @@ export class DeepSeekProvider {
       }
       else return {
         // 2. tool call - tool array for all requested tool calls
-        status: "tool_call", content: { tool_calls: response.choices[0].message.tool_calls, content: response.choices[0].message.content, reasoning_content: response.choices[0].message.reasoning_content }
+        status: "toolCall", content: { tool_calls: response.choices[0].message.tool_calls, content: response.choices[0].message.content, reasoning_content: response.choices[0].message.reasoning_content }
       }
     } catch (error) {
       return { status: "error", content: (error as Error).message }

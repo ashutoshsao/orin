@@ -16,18 +16,20 @@ export type ToolCallsType = {
   toolCalls: ToolType[]
 }
 
-export type ToolExecutionResponseType = {
+type ToolResultType = {
   id: string,
   content: string
-}[]
+}
 
-export type llmResponseType =
+type ToolResultsType = ToolResultType[]
+
+export type LLMResponseType =
   {
     status: "done"
     content: string
   } |
   {
-    status: "tool_call"
+    status: "toolCall"
     content: ToolCallsType
   } |
   {
@@ -35,5 +37,24 @@ export type llmResponseType =
     content: string
   }
 
-export type effortType = z.infer<typeof effort>
-export type roleType = z.infer<typeof role>
+export type MessageType = {
+  role: "user" | "system"
+  content: string
+} |
+{
+  role: "assistant",
+  content: string | ToolCallsType
+} |
+{
+  role: "tool",
+  content: ToolResultsType
+}
+
+export type ContextType = MessageType[];
+
+export type LLMProvider = {
+  callLLM: (context: ContextType, tools: ToolCallsType) => Promise<LLMResponseType>
+}
+
+export type EffortType = z.infer<typeof effort>
+export type RoleType = z.infer<typeof role>

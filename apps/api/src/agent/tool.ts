@@ -1,5 +1,5 @@
 import { $ } from "bun"
-import { ToolType } from "../../types";
+import { ToolType } from "./types";
 
 export const tools = [
   {
@@ -23,19 +23,26 @@ export const tools = [
   }
 ]
 
-export async function tool_execution(toolCalls: ToolType[]) {
+export async function toolExecution(toolCalls: ToolType[]) {
   const toolResponses: { id: string, content: string }[] = [];
   for (let i = 0; i < toolCalls.length; i++) {
-    switch (toolCalls[1].name) {
+    switch (toolCalls[i].name) {
       case "bash_tool": {
-        const { command } = JSON.parse(toolCalls[i].argument);
-        const response = await $`sh -c ${command}`.text();
-        toolResponses.push(
-          {
-            id: toolCalls[i].id,
-            content: response
-          }
-        )
+        try {
+          const { command } = JSON.parse(toolCalls[i].argument);
+          const response = await $`sh -c ${command}`.text();
+          toolResponses.push(
+            {
+              id: toolCalls[i].id,
+              content: response
+            }
+          )
+          break;
+        } catch (e) {
+          toolResponses.push(
+            { id: toolCalls[i].id, content: (e as Error).message }
+          )
+        }
       }
 
       default: {
@@ -45,6 +52,7 @@ export async function tool_execution(toolCalls: ToolType[]) {
             content: `Invalid tool call, tool ${toolCalls[i].id} not execute`
           }
         )
+        break;
       }
     }
   }
