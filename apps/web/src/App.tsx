@@ -130,6 +130,9 @@ function describe(e: AgentEvent): string {
 // A persisted conversation message (from GET /projects/:id/messages).
 type StoredMessage = { seq: number; role: string; content: unknown }
 
+// A rewind point (from GET /projects/:id/snapshots): one pushed codebase snapshot.
+type Snap = { id: string; commitHash: string; n: number; createdAt: string }
+
 // Map persisted messages to the same event shape the live feed renders, so reopening a
 // project replays its transcript. Skips system + raw tool results (noise); the agent's
 // memory is restored server-side regardless — this is just the visual history.
@@ -157,12 +160,43 @@ function Builder({ project, firstPrompt, onBack }: { project: Project; firstProm
   const [pending, setPending] = useState<Pending | null>(null)
   const [followUp, setFollowUp] = useState('')
   const [answer, setAnswer] = useState('')
+  const [snapshots, setSnapshots] = useState<Snap[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  // Bumped after a rewind to re-open the project at the rewound state (re-fetch the
+  // transcript + reconnect the stream). The first prompt only applies to the first mount.
+  const [reloadKey, setReloadKey] = useState(0)
   const esRef = useRef<EventSource | null>(null)
+  const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
+
+  // Rewind points, refreshed on open and whenever a run finishes.
+  const refreshSnapshots = () => {
+    fetch(`${API}/projects/${project.id}/snapshots`, { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((rows: Snap[]) => Array.isArray(rows) && setSnapshots(rows))
+      .catch(() => { /* best-effort */ })
+  }
+  useEffect(refreshSnapshots, [project.id, reloadKey])
+
+  // Roll the project back to a snapshot, then reopen it there: the server truncates the
+  // conversation past that point and repoints the codebase, so the fresh session restores
+  // the older files + clamped history.
+  async function rewindTo(snap: Snap) {
+    if (!confirm(`Rewind to this point? Everything after it (conversation + code changes) is discarded.`)) return
+    const res = await fetch(`${API}/projects/${project.id}/rewind`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ snapshotId: snap.id }),
+    })
+    if (!res.ok) return
+    esRef.current?.close()
+    setEvents([]); setPreviewUrl(null); setSessionId(null); setPending(null); setShowHistory(false)
+    setReloadKey((k) => k + 1)
+  }
 
   // On open, replay the persisted transcript (nothing for a brand-new project) ahead of
   // any live events. Skipped when we're starting a fresh build (firstPrompt present).
   useEffect(() => {
-    if (firstPrompt) return
+    if (effectivePrompt) return
     let cancelled = false
     fetch(`${API}/projects/${project.id}/messages`, { credentials: 'include' })
       .then((res) => (res.ok ? res.json() : []))
@@ -174,10 +208,11 @@ function Builder({ project, firstPrompt, onBack }: { project: Project; firstProm
       })
       .catch(() => { /* history is best-effort */ })
     return () => { cancelled = true }
-  }, [project.id, firstPrompt])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, reloadKey])
 
   useEffect(() => {
-    const url = `${API}/agent/stream?projectId=${project.id}${firstPrompt ? `&prompt=${encodeURIComponent(firstPrompt)}` : ''}`
+    const url = `${API}/agent/stream?projectId=${project.id}${effectivePrompt ? `&prompt=${encodeURIComponent(effectivePrompt)}` : ''}`
     const es = new EventSource(url, { withCredentials: true }) // sends the auth cookie
     esRef.current = es
     es.onmessage = (msg) => {
@@ -189,11 +224,12 @@ function Builder({ project, firstPrompt, onBack }: { project: Project; firstProm
       if (e.event === 'ask_user' && e.callId && e.question != null) {
         setPending({ callId: e.callId, question: e.question, options: e.options ?? [] })
       }
+      if (e.event === 'final') refreshSnapshots() // a run finished — new rewind points
     }
     es.onerror = () => { /* connection ended */ }
     return () => es.close() // leaving the builder disconnects → server tears the sandbox down
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id])
+  }, [project.id, reloadKey])
 
   function sendFollowUp() {
     if (!sessionId || !followUp.trim()) return
@@ -219,8 +255,34 @@ function Builder({ project, firstPrompt, onBack }: { project: Project; firstProm
       <aside style={{ borderRight: '1px solid #ddd', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ padding: 12, borderBottom: '1px solid #eee', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <strong>{project.name}</strong>
-          <button onClick={onBack} style={linkBtn}>← projects</button>
+          <div style={{ display: 'flex', gap: 12 }}>
+            {snapshots.length > 0 && (
+              <button onClick={() => setShowHistory((v) => !v)} style={linkBtn}>
+                {showHistory ? 'hide history' : `history (${snapshots.length})`}
+              </button>
+            )}
+            <button onClick={onBack} style={linkBtn}>← projects</button>
+          </div>
         </div>
+        {showHistory && (
+          <div style={{ borderBottom: '1px solid #eee', padding: 12, maxHeight: 220, overflowY: 'auto', background: '#fafafa' }}>
+            <div style={{ fontSize: 12, color: '#666', marginBottom: 8 }}>
+              Rewind to an earlier point — the code and conversation after it are discarded.
+            </div>
+            <ol style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 6 }}>
+              {snapshots.map((snap, i) => (
+                <li key={snap.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, fontSize: 12 }}>
+                  <span style={{ fontFamily: 'ui-monospace, monospace', color: '#555' }}>
+                    #{i + 1} {snap.commitHash.slice(0, 7)} · {new Date(snap.createdAt).toLocaleTimeString()}
+                  </span>
+                  <button onClick={() => rewindTo(snap)} disabled={i === snapshots.length - 1}>
+                    {i === snapshots.length - 1 ? 'current' : 'rewind here'}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </div>
+        )}
         <ol style={{ margin: 0, padding: 12, overflowY: 'auto', flex: 1, listStyle: 'none', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
           {events.map((e, i) => (
             <li key={i} style={{ padding: '3px 0', borderBottom: '1px solid #f2f2f2', whiteSpace: 'pre-wrap' }}>
