@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { MotionConfig } from 'motion/react'
 import { authClient } from './authClient'
 import { Toaster } from '@/components/ui/sonner'
 import { AuthScreen } from '@/screens/AuthScreen'
@@ -24,7 +25,9 @@ export default function App() {
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
 
   return (
-    <>
+    // reducedMotion="user" honours the OS setting — animation is a nicety, never a cost
+    // imposed on someone who asked for less of it.
+    <MotionConfig reducedMotion="user">
       {isPending ? (
         <div className="grid min-h-dvh place-items-center bg-background" />
       ) : !session ? (
@@ -35,6 +38,6 @@ export default function App() {
         <Builder {...active} onBack={() => setActive(null)} />
       )}
       <Toaster />
-    </>
+    </MotionConfig>
   )
 }

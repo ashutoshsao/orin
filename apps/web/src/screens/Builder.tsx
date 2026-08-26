@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowUp, History, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { AnimatePresence, motion } from 'motion/react'
 import { API, getJSON, historyToEvents, postJSON, timeAgo, type AgentEvent, type Pending, type Project, type Snap, type StoredMessage } from '@/lib/api'
 import { activityLine, errorText, eventKind } from '@/lib/events'
+import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
@@ -111,8 +113,17 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
         </header>
         <Separator />
 
+        <AnimatePresence initial={false}>
         {showHistory && (
-          <div className="border-b bg-muted/30 px-4 py-3">
+          <motion.div
+            key="history"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="overflow-hidden border-b bg-muted/30"
+          >
+          <div className="px-4 py-3">
             <p className="text-xs text-muted-foreground">
               Rewind to an earlier point. Work after it is discarded.
             </p>
@@ -134,14 +145,25 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
               })}
             </ul>
           </div>
+          </motion.div>
         )}
+        </AnimatePresence>
 
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-3 px-4 py-4">
             {events.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">Waking up the environment…</p>
             )}
-            {events.map((e, i) => <FeedRow key={i} event={e} onAnswer={submitAnswer} />)}
+            {events.map((e, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+              >
+                <FeedRow event={e} onAnswer={submitAnswer} />
+              </motion.div>
+            ))}
             {running && (
               <p className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Loader2 className="size-3 animate-spin" /> working…
@@ -192,9 +214,12 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
 
       <main className="hidden min-w-0 p-3 md:block">
         {previewUrl ? (
-          <iframe
+          <motion.iframe
             src={previewUrl}
             title="App preview"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.3, ease: 'easeOut' }}
             className="h-full w-full rounded-xl border bg-white"
           />
         ) : (
@@ -237,11 +262,7 @@ function FeedRow({ event, onAnswer }: { event: AgentEvent; onAnswer: (v: string)
     )
   }
   if (kind === 'assistant') {
-    return (
-      <div className="text-sm leading-relaxed whitespace-pre-wrap">
-        {String(event.content ?? '')}
-      </div>
-    )
+    return <Markdown>{String(event.content ?? '')}</Markdown>
   }
   if (kind === 'question') {
     return (
