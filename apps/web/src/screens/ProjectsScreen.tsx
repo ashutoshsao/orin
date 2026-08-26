@@ -5,8 +5,9 @@ import { API, authed, postJSON, timeAgo, type Project } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 
-// Home: the composer is the primary action (this is a builder, so "describe an app" is
-// the job), with saved projects listed beneath it.
+// Home is the "describe an app" moment, not a dashboard: the composer is centered and
+// given the viewport, with saved projects kept quietly below it (and absent entirely
+// until there are some, so a first-time user sees only the one thing to do).
 export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: string) => void }) {
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [prompt, setPrompt] = useState('')
@@ -21,8 +22,7 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
     return () => { alive = false }
   }, [])
 
-  async function create(e: React.FormEvent) {
-    e.preventDefault()
+  async function create() {
     const text = prompt.trim()
     if (!text || creating) return
     setCreating(true)
@@ -33,67 +33,69 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
 
   return (
     <div className="min-h-dvh bg-background">
-      <header className="mx-auto flex max-w-2xl items-center justify-between px-6 py-5">
+      <header className="flex items-center justify-between px-6 py-5">
         <span className="font-semibold tracking-tight">Orin</span>
         <Button variant="ghost" size="sm" onClick={() => authClient.signOut()}>
           <LogOut /> Sign out
         </Button>
       </header>
 
-      <main className="mx-auto max-w-2xl px-6 pb-20">
-        <h1 className="mt-8 text-2xl font-semibold tracking-tight">What should we build?</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+      <section className="mx-auto flex min-h-[62vh] max-w-2xl flex-col justify-center px-6 text-center">
+        <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+          What should we build?
+        </h1>
+        <p className="mx-auto mt-3 max-w-md text-balance text-sm text-muted-foreground">
           Describe it in a sentence. You can refine it as it comes together.
         </p>
 
-        <form onSubmit={create} className="mt-5">
-          <div className="relative rounded-xl border bg-card shadow-xs transition-colors focus-within:border-ring">
-            <textarea
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create(e) }}
-              rows={3}
-              placeholder="A todo app with filters and dark mode…"
-              className="w-full resize-none bg-transparent px-4 py-3.5 text-sm outline-none placeholder:text-muted-foreground"
-            />
-            <div className="flex items-center justify-between px-3 pb-3">
-              <span className="text-xs text-muted-foreground">⌘↵ to start</span>
-              <Button type="submit" size="sm" disabled={!prompt.trim() || creating}>
-                {creating ? 'Starting…' : <>Build <ArrowUp /></>}
-              </Button>
-            </div>
+        <form
+          onSubmit={(e) => { e.preventDefault(); create() }}
+          className="mt-8 rounded-xl border bg-card text-left shadow-xs transition-colors focus-within:border-ring"
+        >
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
+            rows={3}
+            autoFocus
+            placeholder="A todo app with filters and dark mode…"
+            className="w-full resize-none bg-transparent px-4 py-3.5 text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <div className="flex items-center justify-between px-3 pb-3">
+            <span className="text-xs text-muted-foreground">⌘↵ to start</span>
+            <Button type="submit" size="sm" disabled={!prompt.trim() || creating}>
+              {creating ? 'Starting…' : <>Build <ArrowUp /></>}
+            </Button>
           </div>
         </form>
+      </section>
 
-        <section className="mt-12">
-          <h2 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Projects</h2>
-          <div className="mt-3">
-            {projects === null && (
-              <div className="space-y-2">
-                {[0, 1].map((i) => <Skeleton key={i} className="h-16 w-full rounded-lg" />)}
-              </div>
-            )}
-            {projects?.length === 0 && (
-              <p className="py-6 text-sm text-muted-foreground">
-                Nothing here yet — your first build will show up in this list.
-              </p>
-            )}
-            <ul className="divide-y rounded-lg border">
-              {projects?.map((p) => (
-                <li key={p.id}>
-                  <button
-                    onClick={() => onOpen(p)}
-                    className="flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left transition-colors hover:bg-muted/60"
-                  >
-                    <span className="truncate text-sm font-medium">{p.name}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(p.createdAt)}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+      {projects === null && (
+        <div className="mx-auto max-w-2xl space-y-2 px-6 pb-16">
+          <Skeleton className="h-12 w-full rounded-lg" />
+        </div>
+      )}
+
+      {projects && projects.length > 0 && (
+        <section className="mx-auto max-w-2xl px-6 pb-20">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Your projects
+          </h2>
+          <ul className="mt-3 divide-y rounded-lg border">
+            {projects.map((p) => (
+              <li key={p.id}>
+                <button
+                  onClick={() => onOpen(p)}
+                  className="flex w-full items-center justify-between gap-4 px-4 py-3.5 text-left transition-colors hover:bg-muted/60"
+                >
+                  <span className="truncate text-sm font-medium">{p.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(p.createdAt)}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
-      </main>
+      )}
     </div>
   )
 }
