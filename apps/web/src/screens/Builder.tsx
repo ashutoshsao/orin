@@ -89,15 +89,22 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
     setPending(null); setAnswer('')
   }
 
+  // Reopen the project on a fresh session. Everything on screen belongs to the old
+  // session — a parked ask_user (whose callId dies with it), the transcript we're about
+  // to re-fetch, the preview URL of a torn-down sandbox — so all of it is cleared.
+  function reopen() {
+    esRef.current?.close()
+    setEvents([]); setPreviewUrl(null); setSessionId(null); setPending(null); setShowHistory(false)
+    setReloadKey((k) => k + 1)
+  }
+
   // Roll back to a snapshot, then reopen there: the server truncates the conversation
   // past that point and repoints the codebase, so the fresh session restores older files.
   async function rewindTo(snap: Snap) {
     setConfirmSnap(null)
     const res = await postJSON(`/projects/${project.id}/rewind`, { snapshotId: snap.id })
     if (!res.ok) { toast.error('Could not rewind to that point.'); return }
-    esRef.current?.close()
-    setEvents([]); setPreviewUrl(null); setSessionId(null); setPending(null); setShowHistory(false)
-    setReloadKey((k) => k + 1)
+    reopen()
     toast.success('Rewound', { description: 'Restoring the code and conversation from that point.' })
   }
 
@@ -188,7 +195,7 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
               {connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
             </span>
             {connection === 'closed' && (
-              <Button variant="ghost" size="xs" onClick={() => setReloadKey((k) => k + 1)}>Reconnect</Button>
+              <Button variant="ghost" size="xs" onClick={reopen}>Reconnect</Button>
             )}
           </div>
         )}
