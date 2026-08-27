@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUp, History, Loader2 } from 'lucide-react'
+import { ArrowLeft, ArrowUp, ChevronRight, History, Loader2, PlugZap } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnimatePresence, motion } from 'motion/react'
 import { API, getJSON, historyToEvents, postJSON, timeAgo, type AgentEvent, type Pending, type Project, type Snap, type StoredMessage } from '@/lib/api'
-import { activityLine, errorText, eventKind } from '@/lib/events'
+import { activityLine, errorText, eventKind, groupFeed, summarizeActivity } from '@/lib/events'
 import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -26,6 +26,8 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   // Bumped after a rewind to reopen the project at the rewound state. The first prompt
   // only applies to the very first mount.
   const [reloadKey, setReloadKey] = useState(0)
+  // The stream dying used to be invisible — the UI just sat there looking busy.
+  const [connection, setConnection] = useState<'open' | 'reconnecting' | 'closed'>('open')
   const esRef = useRef<EventSource | null>(null)
   const feedEndRef = useRef<HTMLDivElement | null>(null)
   const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
@@ -52,6 +54,10 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
     const url = `${API}/agent/stream?projectId=${project.id}${effectivePrompt ? `&prompt=${encodeURIComponent(effectivePrompt)}` : ''}`
     const es = new EventSource(url, { withCredentials: true }) // carries the auth cookie
     esRef.current = es
+    setConnection('open')
+    es.onopen = () => setConnection('open')
+    // EventSource retries on its own unless the stream was closed for good.
+    es.onerror = () => setConnection(es.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting')
     es.onmessage = (msg) => {
       const e: AgentEvent = JSON.parse(msg.data)
       if (e.event === 'ping') return
@@ -154,14 +160,16 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
             {events.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">Waking up the environment…</p>
             )}
-            {events.map((e, i) => (
+            {groupFeed(events).map((item, i, all) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
               >
-                <FeedRow event={e} onAnswer={submitAnswer} />
+                {item.type === 'message'
+                  ? <FeedRow event={item.event} onAnswer={submitAnswer} />
+                  : <ActivityGroup events={item.events} live={i === all.length - 1} />}
               </motion.div>
             ))}
             {running && (
@@ -172,6 +180,18 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
             <div ref={feedEndRef} />
           </div>
         </ScrollArea>
+
+        {connection !== 'open' && (
+          <div className="flex items-center justify-between gap-2 border-t bg-muted/40 px-4 py-2 text-xs">
+            <span className="flex items-center gap-1.5 text-muted-foreground">
+              <PlugZap className="size-3.5" />
+              {connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
+            </span>
+            {connection === 'closed' && (
+              <Button variant="ghost" size="xs" onClick={() => setReloadKey((k) => k + 1)}>Reconnect</Button>
+            )}
+          </div>
+        )}
 
         <div className="border-t p-3">
           {pending ? (
@@ -250,6 +270,53 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   )
 }
 
+// A run of telemetry between two bits of conversation. The most recent group stays open
+// so live progress is visible; earlier ones collapse to a single summary line.
+function ActivityGroup({ events, live }: { events: AgentEvent[]; live: boolean }) {
+  const [open, setOpen] = useState(live)
+  useEffect(() => { if (live) setOpen(true) }, [live])
+
+  if (events.length === 1) return <ActivityRow event={events[0]} />
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        aria-expanded={open}
+      >
+        <ChevronRight className={`size-3 transition-transform ${open ? 'rotate-90' : ''}`} />
+        {summarizeActivity(events)}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="overflow-hidden"
+          >
+            <div className="mt-1 space-y-1 border-l pl-3">
+              {events.map((e, i) => <ActivityRow key={i} event={e} />)}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+function ActivityRow({ event }: { event: AgentEvent }) {
+  const { label, detail } = activityLine(event)
+  return (
+    <p className="flex gap-2 text-xs text-muted-foreground">
+      <span className="shrink-0">{label}</span>
+      {detail && <span className="truncate opacity-70">{detail}</span>}
+    </p>
+  )
+}
+
 // One feed entry. The conversation reads as prose; telemetry stays a thin muted line.
 function FeedRow({ event, onAnswer }: { event: AgentEvent; onAnswer: (v: string) => void }) {
   const kind = eventKind(event)
@@ -282,11 +349,5 @@ function FeedRow({ event, onAnswer }: { event: AgentEvent; onAnswer: (v: string)
     return <p className="text-xs text-destructive">{errorText(event)}</p>
   }
 
-  const { label, detail } = activityLine(event)
-  return (
-    <p className="flex gap-2 text-xs text-muted-foreground">
-      <span className="shrink-0">{label}</span>
-      {detail && <span className="truncate opacity-70">{detail}</span>}
-    </p>
-  )
+  return <ActivityRow event={event} />
 }

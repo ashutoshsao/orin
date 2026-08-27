@@ -45,3 +45,35 @@ export function errorText(e: AgentEvent): string {
     default: return String(e.message ?? e.content ?? 'Something went wrong.')
   }
 }
+
+// A long build emits dozens of telemetry rows between two sentences of conversation.
+// Group consecutive activity events so the feed reads as a conversation with collapsed
+// work in between, rather than a wall of `ran bash_tool`.
+export type FeedItem =
+  | { type: 'message'; event: AgentEvent }
+  | { type: 'activity'; events: AgentEvent[] }
+
+export function groupFeed(events: AgentEvent[]): FeedItem[] {
+  const out: FeedItem[] = []
+  for (const e of events) {
+    if (eventKind(e) === 'activity') {
+      const last = out[out.length - 1]
+      if (last && last.type === 'activity') last.events.push(e)
+      else out.push({ type: 'activity', events: [e] })
+    } else {
+      out.push({ type: 'message', event: e })
+    }
+  }
+  return out
+}
+
+// One-line summary of a collapsed group: lead with what was actually done (tools run)
+// rather than the raw step count, which tells the reader nothing.
+export function summarizeActivity(events: AgentEvent[]): string {
+  const tools = events
+    .filter((e) => e.event === 'tool_call')
+    .flatMap((e) => (e.tools as { name: string }[] | undefined) ?? [])
+  const steps = events.length
+  if (tools.length === 0) return `${steps} step${steps === 1 ? '' : 's'}`
+  return `${tools.length} command${tools.length === 1 ? '' : 's'} · ${steps} steps`
+}
