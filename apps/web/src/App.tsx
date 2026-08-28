@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { MotionConfig } from 'motion/react'
 import { authClient } from './authClient'
 import { Toaster } from '@/components/ui/sonner'
@@ -7,20 +7,7 @@ import { ProjectsScreen } from '@/screens/ProjectsScreen'
 import { Builder } from '@/screens/Builder'
 import type { Project } from '@/lib/api'
 
-// shadcn's dark tokens key off a `.dark` class, so follow the OS setting rather than
-// shipping a toggle — one less control, and it matches whatever the user already chose.
-function useSystemTheme() {
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const apply = () => document.documentElement.classList.toggle('dark', mq.matches)
-    apply()
-    mq.addEventListener('change', apply)
-    return () => mq.removeEventListener('change', apply)
-  }, [])
-}
-
 export default function App() {
-  useSystemTheme()
   const { data: session, isPending } = authClient.useSession()
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
 

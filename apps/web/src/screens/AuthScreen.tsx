@@ -3,6 +3,7 @@ import { authClient } from '@/authClient'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { ThemeToggle } from '@/components/theme-toggle'
 
 // Sign in / sign up. Accounts are invite-gated server-side, so a rejected sign-up is a
 // normal outcome, not an edge case — the error is shown plainly rather than as an alarm.
@@ -25,7 +26,8 @@ export function AuthScreen() {
   }
 
   return (
-    <div className="grid min-h-dvh place-items-center bg-background px-6">
+    <div className="relative grid min-h-dvh place-items-center bg-background px-6">
+      <div className="absolute top-5 right-6"><ThemeToggle /></div>
       <div className="w-full max-w-sm">
         <div className="mb-8">
           <h1 className="text-2xl font-semibold tracking-tight">Orin</h1>

@@ -4,6 +4,7 @@ import { authClient } from '@/authClient'
 import { API, authed, postJSON, timeAgo, type Project } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ThemeToggle } from '@/components/theme-toggle'
 
 // Home is the "describe an app" moment, not a dashboard: the composer is centered and
 // given the viewport, with saved projects kept quietly below it (and absent entirely
@@ -35,9 +36,12 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
     <div className="min-h-dvh bg-background">
       <header className="flex items-center justify-between px-6 py-5">
         <span className="font-semibold tracking-tight">Orin</span>
-        <Button variant="ghost" size="sm" onClick={() => authClient.signOut()}>
-          <LogOut /> Sign out
-        </Button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <Button variant="ghost" size="sm" onClick={() => authClient.signOut()}>
+            <LogOut /> Sign out
+          </Button>
+        </div>
       </header>
 
       <section className="mx-auto flex min-h-[62vh] max-w-2xl flex-col justify-center px-6 text-center">

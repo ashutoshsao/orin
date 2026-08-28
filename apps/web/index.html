@@ -4,7 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>react-template</title>
+    <title>Orin</title>
+    <script>
+      // Set the theme class before first paint (mirrors src/lib/theme.ts) — otherwise a
+      // dark-theme user sees a flash of the light palette while the bundle loads.
+      try {
+        var t = localStorage.getItem('orin-theme')
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+        if (t === 'dark') document.documentElement.classList.add('dark')
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -8,6 +8,7 @@ import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { ThemeToggle } from '@/components/theme-toggle'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -118,11 +119,14 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
             </Button>
             <span className="truncate text-sm font-medium">{project.name}</span>
           </div>
-          {snapshots.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={() => setShowHistory((v) => !v)} aria-expanded={showHistory}>
-              <History /> {snapshots.length}
-            </Button>
-          )}
+          <div className="flex items-center gap-1">
+            {snapshots.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => setShowHistory((v) => !v)} aria-expanded={showHistory}>
+                <History /> {snapshots.length}
+              </Button>
+            )}
+            <ThemeToggle />
+          </div>
         </header>
         <Separator />
 

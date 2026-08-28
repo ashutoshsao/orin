@@ -2,12 +2,18 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "@fontsource/instrument-serif/400.css";
+@import "@fontsource/instrument-serif/400-italic.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+    /* Serif is for headlines only — everything you read stays in Geist. */
+    --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
+    --font-mono: 'Geist Mono Variable', ui-monospace, Menlo, monospace;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,25 +54,26 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Light = "warm editorial": paper ground, warm ink, one clay accent. */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
+    --background: #F5F1E8;
+    --foreground: #1C1814;
+    --card: #FFFCF6;
+    --card-foreground: #1C1814;
+    --popover: #FFFCF6;
+    --popover-foreground: #1C1814;
+    --primary: #C2552D;
+    --primary-foreground: #FFFCF6;
+    --secondary: #EDE7DB;
+    --secondary-foreground: #1C1814;
+    --muted: #EDE7DB;
+    --muted-foreground: #8B8378;
+    --accent: #EDE7DB;
+    --accent-foreground: #1C1814;
     --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
+    --border: #E4DDD0;
+    --input: #E4DDD0;
+    --ring: #C2552D;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -83,25 +90,26 @@
     --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* Dark = "studio": near-black ground, cool grays, one electric accent for live state. */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.922 0 0);
-    --primary-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    --background: #0D0E11;
+    --foreground: #E9EAEC;
+    --card: #15171B;
+    --card-foreground: #E9EAEC;
+    --popover: #15171B;
+    --popover-foreground: #E9EAEC;
+    --primary: #C7F36B;
+    --primary-foreground: #0D0E11;
+    --secondary: #1C1F24;
+    --secondary-foreground: #E9EAEC;
+    --muted: #1C1F24;
+    --muted-foreground: #878C96;
+    --accent: #1C1F24;
+    --accent-foreground: #E9EAEC;
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
+    --border: #262A30;
+    --input: #262A30;
+    --ring: #C7F36B;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);

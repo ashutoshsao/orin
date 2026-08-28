@@ -1,11 +1,13 @@
 "use client"
 
-import { useTheme } from "next-themes"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
+import { useTheme } from "@/lib/theme"
 
+// shadcn wires this to next-themes, which Orin doesn't use (no provider → always
+// "system", so toasts ignored the toggle). Read our own theme store instead.
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme()
+  const [theme] = useTheme()
 
   return (
     <Sonner
