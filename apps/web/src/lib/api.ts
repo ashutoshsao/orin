@@ -13,7 +13,7 @@ export type AgentEvent = {
 export type Pending = { callId: string; question: string; options: string[] }
 
 // A persisted conversation message (GET /projects/:id/messages).
-export type StoredMessage = { seq: number; role: string; content: unknown }
+export type StoredMessage = { seq: number; role: string; content: unknown; createdAt?: string }
 
 // A rewind point (GET /projects/:id/snapshots): one pushed codebase snapshot.
 export type Snap = { id: string; commitHash: string; n: number; createdAt: string }
@@ -44,18 +44,26 @@ export async function getJSON<T>(path: string, fallback: T): Promise<T> {
 export function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
   const out: AgentEvent[] = []
   for (const m of messages) {
+    const ts = m.createdAt
     if (m.role === 'user') {
-      out.push({ event: 'run_start', userPrompt: String(m.content) })
+      out.push({ event: 'run_start', userPrompt: String(m.content), ts })
     } else if (m.role === 'assistant') {
       if (typeof m.content === 'string') {
-        out.push({ event: 'final', content: m.content })
+        out.push({ event: 'final', content: m.content, ts })
       } else {
         const calls = (m.content as { toolCalls?: { name: string }[] })?.toolCalls ?? []
-        if (calls.length) out.push({ event: 'tool_call', tools: calls.map((t) => ({ name: t.name, ok: true })) })
+        if (calls.length) out.push({ event: 'tool_call', tools: calls.map((t) => ({ name: t.name, ok: true })), ts })
       }
     }
   }
   return out
+}
+
+// "14:02" — the chat gutter's clock. Local time, 24h, no seconds.
+export function clockTime(iso: unknown): string {
+  if (typeof iso !== 'string') return ''
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 // Relative time, for timestamps that should read as prose rather than data.

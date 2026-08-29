@@ -1,19 +1,20 @@
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { cn } from '@/lib/utils'
 
 // The agent writes markdown ("**Features**", bullet lists, `code`). Rendering it as raw
 // text was the most visible rough edge in the feed. Elements are mapped explicitly
 // rather than using a prose plugin so the output stays in the sidebar's type scale.
-export function Markdown({ children }: { children: string }) {
+export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
-    <div className="text-sm leading-relaxed [&>*+*]:mt-3">
+    <div className={cn('text-sm leading-relaxed [&>*+*]:mt-3', className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           p: ({ children }) => <p>{children}</p>,
           strong: ({ children }) => <strong className="font-medium">{children}</strong>,
           em: ({ children }) => <em className="italic">{children}</em>,
-          ul: ({ children }) => <ul className="list-disc space-y-1 pl-4 marker:text-muted-foreground">{children}</ul>,
+          ul: ({ children }) => <ul className="list-disc space-y-1 pl-4 marker:text-primary">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal space-y-1 pl-4 marker:text-muted-foreground">{children}</ol>,
           li: ({ children }) => <li className="pl-0.5">{children}</li>,
           h1: ({ children }) => <h3 className="font-medium">{children}</h3>,

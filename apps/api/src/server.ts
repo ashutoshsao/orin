@@ -100,7 +100,8 @@ export const app = new Elysia()
         return { error: "project_not_found" };
       }
       return db
-        .select({ seq: message.seq, role: message.role, content: message.content })
+        // createdAt lets the replayed transcript show the same timestamps as the live one.
+        .select({ seq: message.seq, role: message.role, content: message.content, createdAt: message.createdAt })
         .from(message)
         .where(eq(message.projectId, params.id))
         .orderBy(asc(message.seq));

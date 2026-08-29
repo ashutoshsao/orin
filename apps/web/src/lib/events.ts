@@ -77,3 +77,33 @@ export function summarizeActivity(events: AgentEvent[]): string {
   if (tools.length === 0) return `${steps} step${steps === 1 ? '' : 's'}`
   return `${tools.length} command${tools.length === 1 ? '' : 's'} · ${steps} steps`
 }
+
+// What the agent is doing right now, for the preview bar's status. Only *live* events
+// count (they carry a sessionId, or are our own optimistic prompt): replayed history
+// has neither, and a transcript whose last run never finished must not read as
+// "building" forever on reopen. A run starts at run_start and ends at any of RUN_ENDS.
+const RUN_ENDS = new Set(['final', 'error', 'exception', 'max_iterations_reached'])
+
+export type RunStatus = { label: string; active: boolean; building: boolean }
+
+export function runStatus(
+  events: AgentEvent[],
+  o: { pending: boolean; hasPreview: boolean; online: boolean },
+): RunStatus {
+  if (!o.online) return { label: 'offline', active: false, building: false }
+  if (o.pending) return { label: 'waiting for you', active: true, building: false }
+  let lastStart = -1
+  let lastEnd = -1
+  let step: number | undefined
+  events.forEach((e, i) => {
+    if (!e.sessionId && !e.local) return
+    if (e.event === 'run_start') { lastStart = i; step = undefined }
+    else if (RUN_ENDS.has(e.event)) lastEnd = i
+    else if (e.event === 'llm_call' && typeof e.iteration === 'number') step = e.iteration
+  })
+  if (lastStart > lastEnd) {
+    return { label: step ? `building · step ${step}` : 'building', active: true, building: true }
+  }
+  if (o.hasPreview) return { label: 'preview · live', active: false, building: false }
+  return { label: 'starting', active: true, building: false }
+}
