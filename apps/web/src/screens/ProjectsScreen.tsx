@@ -47,7 +47,8 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
       <section className="mx-auto flex max-w-[680px] flex-col items-center px-6 pt-16 text-center sm:pt-24">
         {/* Instrument Serif ships one weight — keep it font-normal so the browser never fakes a bold. */}
         <h1 className="text-balance font-display text-5xl leading-none font-normal tracking-[-0.02em] sm:text-7xl lg:text-[78px]">
-          What should we <em className="text-primary">build</em>?
+          {/* Italic correction: the slanted "d" overhangs into the upright "?" without it. */}
+          What should we <em className="pr-[0.07em] text-primary">build</em>?
         </h1>
         <p className="mt-5 text-balance text-base text-muted-foreground">
           Describe it in a sentence. You'll refine it as it comes together.
