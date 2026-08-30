@@ -1,5 +1,5 @@
 import { $ } from "bun"
-import { ToolType } from "./types";
+import { ToolCall } from "./types";
 
 export const tools = [
   {
@@ -23,13 +23,13 @@ export const tools = [
   }
 ]
 
-export async function toolExecution(toolCalls: ToolType[]) {
+export async function toolExecution(toolCalls: ToolCall[]) {
   const toolResponses: { id: string, content: string }[] = [];
   for (let i = 0; i < toolCalls.length; i++) {
     switch (toolCalls[i].name) {
       case "bash_tool": {
         try {
-          const { command } = JSON.parse(toolCalls[i].argument);
+          const { command } = toolCalls[i].argument;
           const response = await $`sh -c ${command}`.text();
           toolResponses.push(
             {
@@ -42,6 +42,7 @@ export async function toolExecution(toolCalls: ToolType[]) {
           toolResponses.push(
             { id: toolCalls[i].id, content: (e as Error).message }
           )
+          break;
         }
       }
 
