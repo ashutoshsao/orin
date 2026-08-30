@@ -198,8 +198,10 @@ export const app = new Elysia()
           // Start the dev server in parallel with the first build so the preview is
           // live *while* the agent edits (Vite HMR shows progress), not only after.
           const preview = session.startPreview(); // pushes preview_ready (with the URL)
-          // prompt present = a new project's first build; absent = reopening (resume).
-          if (query.prompt) await session.submit(query.prompt);
+          // `prompt` is only the *first* build of a brand-new project. If the project
+          // already has a conversation, this is a reconnect — EventSource retries reuse
+          // the original URL, prompt included — so running it again would duplicate it.
+          if (query.prompt && initialContext.length === 0) await session.submit(query.prompt);
           await preview.catch(() => { }); // settle/surface any preview startup error
         } catch (e) {
           queue.push({ ts: new Date().toISOString(), sessionId: "", event: "stream_error", message: String(e) });

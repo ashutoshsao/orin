@@ -34,6 +34,9 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   const [connection, setConnection] = useState<'open' | 'reconnecting' | 'closed'>('open')
   const esRef = useRef<EventSource | null>(null)
   const feedEndRef = useRef<HTMLDivElement | null>(null)
+  // Consecutive failed connection attempts, for reconnect backoff.
+  const retriesRef = useRef(0)
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
   const status = runStatus(events, { pending: pending !== null, hasPreview: previewUrl !== null, online: connection === 'open' })
 
@@ -59,9 +62,18 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
     const es = new EventSource(url, { withCredentials: true }) // carries the auth cookie
     esRef.current = es
     setConnection('open')
-    es.onopen = () => setConnection('open')
-    // EventSource retries on its own unless the stream was closed for good.
-    es.onerror = () => setConnection(es.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting')
+    es.onopen = () => { retriesRef.current = 0; setConnection('open') }
+    // Never let EventSource reconnect by itself: its retry reuses this URL — first prompt
+    // included, which ran the prompt twice — and it would keep the dead session's state on
+    // screen. Close it and reopen cleanly (no prompt, fresh state), backing off; after a
+    // few failures, stop and offer the Reconnect button.
+    es.onerror = () => {
+      es.close()
+      const attempt = retriesRef.current++
+      if (attempt >= 4) { setConnection('closed'); return }
+      setConnection('reconnecting')
+      retryTimerRef.current = setTimeout(reopen, Math.min(1000 * 2 ** attempt, 8000))
+    }
     es.onmessage = (msg) => {
       const e: AgentEvent = JSON.parse(msg.data)
       if (e.event === 'ping') return
@@ -82,7 +94,10 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
       }
       if (e.event === 'final') refreshSnapshots() // a run finished — new rewind points
     }
-    return () => es.close() // leaving disconnects → the server tears the sandbox down
+    return () => {
+      es.close() // leaving disconnects → the server tears the sandbox down
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, reloadKey])
 
@@ -216,7 +231,9 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
               <PlugZap className="size-3.5" />
               {connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
             </span>
-            {connection === 'closed' && <Button variant="ghost" size="xs" onClick={reopen}>Reconnect</Button>}
+            {connection === 'closed' && (
+              <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; reopen() }}>Reconnect</Button>
+            )}
           </div>
         )}
 
