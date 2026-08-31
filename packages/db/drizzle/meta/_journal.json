@@ -29,6 +29,13 @@
       "when": 1789032427083,
       "tag": "0003_wakeful_saracen",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789039999929,
+      "tag": "0004_spotty_imperial_guard",
+      "breakpoints": true
     }
   ]
 }

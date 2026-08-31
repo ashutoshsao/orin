@@ -3,11 +3,16 @@ import { user } from "./auth-schema";
 
 // `user` is owned by Better Auth (auth-schema.ts, CLI-generated). Our tables FK to it.
 
+// Every timestamp is `timestamptz` (withTimezone), never plain `timestamp`: Bun's Postgres
+// driver decodes a plain `timestamp` on the parameterised path (any query with a WHERE)
+// by applying the process's local offset, so reads came back shifted (+5:30 in IST).
+// timestamptz is unambiguous and reads correctly on every path. Verified, not assumed.
+
 // Invite gate: only emails present here may create an account.
 export const allowlist = pgTable("allowlist", {
   email: text("email").primaryKey(),
   invitedBy: text("invited_by").references(() => user.id),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // One app being built, owned by a user.
@@ -20,8 +25,8 @@ export const project = pgTable("project", {
   // marker. On sandbox-death restore, context is clamped to this so replayed history
   // never runs ahead of the restorable codebase (M5b step 5).
   durableCodebaseN: integer("durable_codebase_n"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // One pushed codebase snapshot = a rewind point. Written by the snapshot worker per
@@ -33,7 +38,7 @@ export const snapshot = pgTable("snapshot", {
   commitHash: text("commit_hash").notNull(),
   n: integer("n").notNull(),
   key: text("key").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // Durable conversation log — one polymorphic table (role column), tool call/result
@@ -44,5 +49,5 @@ export const message = pgTable("message", {
   seq: integer("seq").notNull(), // ordering within a project
   role: text("role").notNull(), // system | user | assistant | tool
   content: jsonb("content").notNull(), // preserves tool_calls / tool results structure
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
