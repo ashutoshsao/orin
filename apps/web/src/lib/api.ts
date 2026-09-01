@@ -56,6 +56,16 @@ export function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
       }
     }
   }
+  // A run that never produced a final answer was cut off (tab closed, reopened, crashed).
+  // Say so — otherwise a half-finished change (and a possibly broken preview) looks like
+  // the finished state, with nothing telling you why.
+  let lastUser = -1
+  let lastFinal = -1
+  messages.forEach((m, i) => {
+    if (m.role === 'user') lastUser = i
+    else if (m.role === 'assistant' && typeof m.content === 'string') lastFinal = i
+  })
+  if (lastUser > lastFinal) out.push({ event: 'interrupted', ts: messages.at(-1)?.createdAt })
   return out
 }
 

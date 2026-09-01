@@ -3,10 +3,11 @@ import type { AgentEvent } from './api'
 // The feed mixes two very different things: the conversation (what the user asked, what
 // the agent answered) and telemetry (tool calls, snapshots, preview probes). Rendering
 // them identically is what made the old feed read as noise — so classify first.
-export type EventKind = 'user' | 'assistant' | 'question' | 'activity' | 'error'
+export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'activity' | 'error'
 
 export function eventKind(e: AgentEvent): EventKind {
   switch (e.event) {
+    case 'interrupted': return 'notice'
     case 'run_start': return 'user'
     case 'final': return 'assistant'
     case 'ask_user': return 'question'
@@ -52,10 +53,15 @@ export function errorText(e: AgentEvent): string {
 export type FeedItem =
   | { type: 'message'; event: AgentEvent }
   | { type: 'activity'; events: AgentEvent[] }
+  | { type: 'divider'; event: AgentEvent }
 
 export function groupFeed(events: AgentEvent[]): FeedItem[] {
   const out: FeedItem[] = []
   for (const e of events) {
+    // A new sandbox after earlier history means the project was reopened. Mark the
+    // boundary, so the new session's telemetry ("environment ready", "restored") starts
+    // its own group instead of reading as part of whatever run came before it.
+    if (e.event === 'sandbox_created' && out.length > 0) out.push({ type: 'divider', event: e })
     if (eventKind(e) === 'activity') {
       const last = out[out.length - 1]
       if (last && last.type === 'activity') last.events.push(e)

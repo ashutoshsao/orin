@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, ExternalLink, History, Loader2, PlugZap, RotateCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CircleAlert, ExternalLink, History, Loader2, PlugZap, RotateCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnimatePresence, motion } from 'motion/react'
 import { API, clockTime, getJSON, historyToEvents, postJSON, timeAgo, type AgentEvent, type Pending, type Project, type Snap, type StoredMessage } from '@/lib/api'
@@ -210,8 +210,8 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
               >
-                {item.type === 'message'
-                  ? <FeedRow event={item.event} onAnswer={submitAnswer} />
+                {item.type === 'message' ? <FeedRow event={item.event} onAnswer={submitAnswer} />
+                  : item.type === 'divider' ? <SessionDivider ts={item.event.ts} />
                   : <ActivityGroup events={item.events} working={i === all.length - 1 && status.building} />}
               </motion.div>
             ))}
@@ -441,9 +441,35 @@ function FeedRow({ event, onAnswer }: { event: AgentEvent; onAnswer: (v: string)
       </Timed>
     )
   }
+  if (kind === 'notice') {
+    return (
+      <Timed ts={event.ts}>
+        <p className="flex gap-2 text-[13px] leading-relaxed text-muted-foreground">
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            This task was interrupted before it finished, so the preview may show a half-done
+            change. Ask me to continue, or to fix what's broken.
+          </span>
+        </p>
+      </Timed>
+    )
+  }
   if (kind === 'error') {
     return <p className="pl-11 text-xs text-destructive">{errorText(event)}</p>
   }
 
   return <div className="pl-11"><ActivityRow event={event} /></div>
+}
+
+// Where a reopen starts a fresh session: a hairline with the time, so what follows reads
+// as a new sitting rather than the tail of the previous run.
+function SessionDivider({ ts }: { ts: unknown }) {
+  const time = clockTime(ts)
+  return (
+    <div className="flex items-center gap-3 py-1 font-mono text-[11px] text-muted-foreground/70">
+      <span className="h-px flex-1 bg-border" />
+      <span>reopened{time && ` · ${time}`}</span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  )
 }
