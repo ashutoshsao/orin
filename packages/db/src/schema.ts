@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 
 // `user` is owned by Better Auth (auth-schema.ts, CLI-generated). Our tables FK to it.
@@ -43,11 +43,18 @@ export const snapshot = pgTable("snapshot", {
 
 // Durable conversation log — one polymorphic table (role column), tool call/result
 // are rows with the tool name inside `content`. Source of truth for resume.
-export const message = pgTable("message", {
-  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  projectId: text("project_id").notNull().references(() => project.id),
-  seq: integer("seq").notNull(), // ordering within a project
-  role: text("role").notNull(), // system | user | assistant | tool
-  content: jsonb("content").notNull(), // preserves tool_calls / tool results structure
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const message = pgTable(
+  "message",
+  {
+    id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+    projectId: text("project_id").notNull().references(() => project.id),
+    seq: integer("seq").notNull(), // ordering within a project
+    role: text("role").notNull(), // system | user | assistant | tool
+    content: jsonb("content").notNull(), // preserves tool_calls / tool results structure
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // One row per position in a conversation. Without this, a stale session's late write
+  // silently interleaved with the live session's rows at the same seq (corrupting the
+  // tool_calls → results order); now it fails loudly instead.
+  (t) => [uniqueIndex("message_project_seq_unique").on(t.projectId, t.seq)],
+);

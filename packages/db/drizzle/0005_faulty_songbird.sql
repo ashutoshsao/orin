@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "message_project_seq_unique" ON "message" USING btree ("project_id","seq");

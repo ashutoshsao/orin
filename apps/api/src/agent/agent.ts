@@ -148,7 +148,12 @@ export class AgentSession {
   // mid-round), so a saved state is always a valid, resumable one. Best-effort: a
   // persist failure is logged, not thrown, and retried on the next flush.
   private async flush() {
-    if (!this.persist) return;
+    // A closed session must never write. close() only stops the loop at its next check,
+    // so a round already in flight (mid LLM call or tool run) would otherwise finish and
+    // save itself — after a reconnect's new session has loaded the history and taken
+    // those same seq numbers. That interleaved two sessions' rows and left a tool_calls
+    // message without its results, which the provider then rejects (400).
+    if (!this.persist || this.closed) return;
     const tail = this.context.slice(this.persistedCount);
     if (tail.length === 0) return;
     try {
@@ -192,7 +197,7 @@ export class AgentSession {
   // to R2; a no-op round enqueues a `mark` so the durable marker can still advance in
   // order (the worker only honours it if HEAD is durably pushed).
   private async enqueueRound(snap: { hash: string; bundle: Uint8Array } | null) {
-    if (!this.enqueueSnapshot) return;
+    if (!this.enqueueSnapshot || this.closed) return; // same rule as flush(): dead sessions don't write
     try {
       if (snap) {
         await this.enqueueSnapshot({ kind: "push", commitHash: snap.hash, bundle: snap.bundle, n: this.persistedCount });
@@ -310,6 +315,7 @@ export class AgentSession {
       const llmStart = performance.now();
       const response = await this.llmProvider.callLLM(this.context, tools);
       const llmDurationMs = Math.round(performance.now() - llmStart);
+      if (this.closed) break; // closed while the LLM was thinking — don't run tools on a dead sandbox
 
       this.log("llm_call", { iteration: start, status: response.status, durationMs: llmDurationMs, usage: response.usage })
 
