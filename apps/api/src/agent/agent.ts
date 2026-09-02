@@ -4,6 +4,9 @@ import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 
 const TEMPLATE = "orin-react-workspace-dev";
+// Metadata stamped on every sandbox this API creates, so a freshly booted server can find
+// (and kill) the ones a crashed predecessor left running — see sandbox/sweep.ts.
+export const SANDBOX_TAG = { app: "orin-api" };
 
 // Anchors the agent to the actual workspace: it must EDIT the live Vite React app
 // (what the preview serves), not freelance a standalone file. Without this the
@@ -95,7 +98,7 @@ export class AgentSession {
   // so it lives here and the session isn't returned until the sandbox is live.
   // `onEvent`/`persist` are how transports/DB tap in; `initialContext` resumes a project.
   static async create(llmProvider: LLMProvider, opts: CreateOptions = {}) {
-    const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS });
+    const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS, metadata: SANDBOX_TAG });
     const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist, opts.enqueueSnapshot);
     if (opts.initialContext && opts.initialContext.length > 0) {
       // Resume: loaded messages (incl. the original system prompt) are already

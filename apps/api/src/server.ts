@@ -6,6 +6,7 @@ import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interf
 import { AgentSession, type AgentEvent } from "./agent/agent";
 import { loadContext, messagePersister, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
+import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth } from "./auth";
 
 const PORT = 4000;
@@ -286,5 +287,7 @@ export const app = new Elysia()
 
 // Drain codebase-snapshot jobs to R2 in the background, off the agent's hot path (M5b).
 startSnapshotWorker();
+// Kill sandboxes a crashed predecessor left running (fire-and-forget; never blocks boot).
+void sweepOrphanSandboxes();
 
 console.log(`agent SSE server → http://localhost:${PORT}/agent/stream?prompt=...`);
