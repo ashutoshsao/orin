@@ -6,6 +6,11 @@ dist
 dist-ssr
 *.local
 .env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
 .cache
 server/dist
 public/dist

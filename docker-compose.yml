@@ -1,0 +1,47 @@
+# Local dev infrastructure. The apps themselves still run from source
+# (`bun src/server.ts`, `bun run dev`) — only Postgres and Redis live here.
+#
+# Why this file exists: both containers were created by hand with `docker run`, so
+# Postgres kept its data in an anonymous volume and nothing in the repo described the
+# setup. A `docker rm -v` or a prune would have taken every project with it.
+#
+#   docker compose up -d      start
+#   docker compose down       stop (keeps data)
+#   docker compose down -v    stop AND DELETE the database
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: orin
+    # POSTGRES_PASSWORD comes from here (same value as in DATABASE_URL; see .env.docker.example).
+    # Injected into the container, not interpolated into this file — so no --env-file flag needed.
+    env_file:
+      - .env.docker
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d orin"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "6379:6379"
+    # No volume on purpose: the snapshot queue is deliberately ephemeral (the stream is
+    # deleted at worker startup; recovery truth is R2 + Postgres), so persisting it would
+    # only keep stale jobs around. See spec/5b.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pgdata:
