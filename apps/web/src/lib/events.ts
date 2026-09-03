@@ -3,13 +3,20 @@ import type { AgentEvent } from './api'
 // The feed mixes two very different things: the conversation (what the user asked, what
 // the agent answered) and telemetry (tool calls, snapshots, preview probes). Rendering
 // them identically is what made the old feed read as noise — so classify first.
-export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'activity' | 'error'
+export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'limit' | 'activity' | 'error'
+
+// The orchestrator's step-limit note (written by agent.ts when a run hits maxIteration).
+// Live it arrives as a `max_iterations_reached` event; after a reopen it's just a saved
+// assistant message — so recognise its wording to render both the same way. Keep this in
+// step with the note text in apps/api/src/agent/agent.ts.
+const LIMIT_NOTE = /^I hit the \d+-step limit before finishing\./
 
 export function eventKind(e: AgentEvent): EventKind {
   switch (e.event) {
     case 'interrupted': return 'notice'
+    case 'max_iterations_reached': return 'limit'
     case 'run_start': return 'user'
-    case 'final': return 'assistant'
+    case 'final': return typeof e.content === 'string' && LIMIT_NOTE.test(e.content) ? 'limit' : 'assistant'
     case 'ask_user': return 'question'
     case 'error':
     case 'exception':
@@ -34,7 +41,6 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
     case 'snapshot': return { label: 'snapshot', detail: String(e.commit ?? '').slice(0, 7) }
     case 'preview_ready': return { label: 'preview', detail: e.httpStatus === '200' ? 'live' : `status ${e.httpStatus}` }
     case 'sandbox_closed': return { label: 'environment', detail: 'closed' }
-    case 'max_iterations_reached': return { label: 'stopped', detail: 'hit the step limit' }
     default: return { label: e.event.replace(/_/g, ' '), detail: '' }
   }
 }
@@ -73,15 +79,22 @@ export function groupFeed(events: AgentEvent[]): FeedItem[] {
   return out
 }
 
-// One-line summary of a collapsed group: lead with what was actually done (tools run)
-// rather than the raw step count, which tells the reader nothing.
+// One-line summary of a collapsed group, in the agent's own units:
+//   step    = one round (an LLM call that chose tools, then those tools ran) — the same
+//             "step" as the preview bar's "building · step N"
+//   command = one tool call; a single step can issue several
+// Steps are counted from tool_call events: each round emits exactly one, both live and
+// when replayed from history, so the number no longer changes after a reopen. (It used
+// to count every telemetry event — llm_call + tool_call + snapshot… — i.e. ~3× live.)
 export function summarizeActivity(events: AgentEvent[]): string {
-  const tools = events
-    .filter((e) => e.event === 'tool_call')
-    .flatMap((e) => (e.tools as { name: string }[] | undefined) ?? [])
-  const steps = events.length
-  if (tools.length === 0) return `${steps} step${steps === 1 ? '' : 's'}`
-  return `${tools.length} command${tools.length === 1 ? '' : 's'} · ${steps} steps`
+  const rounds = events.filter((e) => e.event === 'tool_call')
+  const commands = rounds.flatMap((e) => (e.tools as { name: string }[] | undefined) ?? []).length
+  if (rounds.length === 0) {
+    // Session housekeeping (environment ready, restored, preview) — no agent work; name it.
+    return [...new Set(events.map((e) => activityLine(e).label))].join(' · ')
+  }
+  const s = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+  return `${s(rounds.length, 'step')} · ${s(commands, 'command')}`
 }
 
 // What the agent is doing right now, for the preview bar's status. Only *live* events
@@ -100,16 +113,19 @@ export function runStatus(
   if (o.pending) return { label: 'waiting for you', active: true, building: false }
   let lastStart = -1
   let lastEnd = -1
+  let endedBy = ''
   let step: number | undefined
   events.forEach((e, i) => {
     if (!e.sessionId && !e.local) return
     if (e.event === 'run_start') { lastStart = i; step = undefined }
-    else if (RUN_ENDS.has(e.event)) lastEnd = i
+    else if (RUN_ENDS.has(e.event)) { lastEnd = i; endedBy = e.event }
     else if (e.event === 'llm_call' && typeof e.iteration === 'number') step = e.iteration
   })
   if (lastStart > lastEnd) {
     return { label: step ? `building · step ${step}` : 'building', active: true, building: true }
   }
+  // A run cut off by the step limit is not "live" — saying so is the whole point.
+  if (endedBy === 'max_iterations_reached') return { label: 'stopped · step limit', active: false, building: false }
   if (o.hasPreview) return { label: 'preview · live', active: false, building: false }
   return { label: 'starting', active: true, building: false }
 }

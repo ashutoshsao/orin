@@ -103,12 +103,17 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
 
   useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events.length])
 
-  function sendFollowUp(e: React.FormEvent) {
-    e.preventDefault()
-    const text = followUp.trim()
-    if (!sessionId || !text) return
+  // One path for every follow-up — the composer and the step-limit "Continue" button alike.
+  function send(text: string) {
+    if (!sessionId || !text.trim()) return
     setEvents((prev) => [...prev, { event: 'run_start', userPrompt: text, ts: new Date().toISOString(), local: true }])
     postJSON(`/agent/${sessionId}/message`, { prompt: text })
+  }
+
+  function sendFollowUp(e: React.FormEvent) {
+    e.preventDefault()
+    if (!followUp.trim()) return
+    send(followUp.trim())
     setFollowUp('')
   }
 
@@ -138,6 +143,8 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   }
 
   const [statusHead, ...statusRest] = status.label.split(' · ')
+  const feed = groupFeed(events)
+  const lastMessageAt = feed.findLastIndex((item) => item.type === 'message')
 
   return (
     <div className="grid h-dvh grid-cols-1 bg-background md:grid-cols-[440px_minmax(0,1fr)]">
@@ -203,14 +210,21 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
             {events.length === 0 && (
               <p className="py-8 text-center text-sm text-muted-foreground">Waking up the environment…</p>
             )}
-            {groupFeed(events).map((item, i, all) => (
+            {feed.map((item, i, all) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
               >
-                {item.type === 'message' ? <FeedRow event={item.event} onAnswer={submitAnswer} />
+                {item.type === 'message' ? (
+                  <FeedRow
+                    event={item.event}
+                    onAnswer={submitAnswer}
+                    // Offer Continue only on the latest message, and only when nothing's running.
+                    onContinue={i === lastMessageAt && !status.building && sessionId ? () => send('continue') : undefined}
+                  />
+                )
                   : item.type === 'divider' ? <SessionDivider ts={item.event.ts} />
                   : <ActivityGroup events={item.events} working={i === all.length - 1 && status.building} />}
               </motion.div>
@@ -406,8 +420,25 @@ function ActivityRow({ event }: { event: AgentEvent }) {
 
 // One conversation entry. Your prompts sit right as paper notes; the agent's answer reads
 // as prose; a question gets a dashed card with its options.
-function FeedRow({ event, onAnswer }: { event: AgentEvent; onAnswer: (v: string) => void }) {
+function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer: (v: string) => void; onContinue?: () => void }) {
   const kind = eventKind(event)
+  const continueButton = onContinue && (
+    <Button variant="outline" size="sm" className="mt-2.5 rounded-lg" onClick={onContinue}>Continue</Button>
+  )
+
+  if (kind === 'limit') {
+    return (
+      <Timed ts={event.ts}>
+        <div className="rounded-xl border border-dashed px-3.5 py-2.5">
+          <p className="flex gap-2 text-[15px] leading-relaxed">
+            <CircleAlert className="mt-1 size-3.5 shrink-0 text-primary" />
+            <span>{String(event.content ?? '')}</span>
+          </p>
+          {continueButton}
+        </div>
+      </Timed>
+    )
+  }
 
   if (kind === 'user') {
     return (
@@ -451,6 +482,7 @@ function FeedRow({ event, onAnswer }: { event: AgentEvent; onAnswer: (v: string)
             change. Ask me to continue, or to fix what's broken.
           </span>
         </p>
+        {continueButton && <div className="pl-5.5">{continueButton}</div>}
       </Timed>
     )
   }

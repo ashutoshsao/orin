@@ -369,8 +369,19 @@ export class AgentSession {
       start++
     }
 
-    if (start > end) {
-      this.log("max_iterations_reached", { iteration: start });
+    if (start > end && !this.closed) {
+      // Hitting the step limit used to be near-silent: one muted telemetry line, and the
+      // preview bar said "live" as if the build had finished. Close the run with a real,
+      // persisted message instead — visible live, correct after a reopen, and when the
+      // user says "continue" the model can see in its own history why it stopped. A
+      // plain-string assistant message is protocol-valid after a tool result (it's the
+      // same shape as a final answer). The web recognises this wording (lib/events.ts).
+      const note = `I hit the ${end}-step limit before finishing. Say "continue" and I'll pick up where I left off.`;
+      this.context.push({ role: "assistant", content: note });
+      this.log("max_iterations_reached", { iteration: start, content: note });
+      const snap = await this.snapshot();
+      await this.flush();
+      await this.enqueueRound(snap);
     }
   }
 }
