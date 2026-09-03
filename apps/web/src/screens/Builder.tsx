@@ -37,6 +37,12 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   // Consecutive failed connection attempts, for reconnect backoff.
   const retriesRef = useRef(0)
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Resume: the last SSE event id we received, and whether the next connection is a
+  // reconnect (keep what's on screen, ask for what we missed) rather than a fresh open.
+  const lastIdRef = useRef('')
+  const resumingRef = useRef(false)
+  // Bumped to reconnect the stream *without* resetting the view (unlike reloadKey).
+  const [connKey, setConnKey] = useState(0)
   const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
   const status = runStatus(events, { pending: pending !== null, hasPreview: previewUrl !== null, online: connection === 'open' })
 
@@ -45,38 +51,65 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   }
   useEffect(refreshSnapshots, [project.id, reloadKey])
 
+  // Load the persisted transcript and put it ahead of whatever live events have arrived.
+  function loadHistory(isAlive: () => boolean = () => true) {
+    getJSON<StoredMessage[]>(`/projects/${project.id}/messages`, []).then((messages) => {
+      const history = historyToEvents(messages)
+      if (isAlive() && history.length) setEvents((prev) => [...history, ...prev])
+    })
+  }
+
   // Replay the persisted transcript on open (nothing for a brand-new project).
   useEffect(() => {
     if (effectivePrompt) return
     let alive = true
-    getJSON<StoredMessage[]>(`/projects/${project.id}/messages`, []).then((messages) => {
-      const history = historyToEvents(messages)
-      if (alive && history.length) setEvents((prev) => [...history, ...prev])
-    })
+    loadHistory(() => alive)
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, reloadKey])
 
+  // Try the stream again without touching what's on screen: the server keeps the session
+  // running for a grace period, and replays exactly the events we missed.
+  function reconnect() {
+    esRef.current?.close()
+    resumingRef.current = true
+    setConnKey((k) => k + 1)
+  }
+
   useEffect(() => {
-    const url = `${API}/agent/stream?projectId=${project.id}${effectivePrompt ? `&prompt=${encodeURIComponent(effectivePrompt)}` : ''}`
-    const es = new EventSource(url, { withCredentials: true }) // carries the auth cookie
+    const params = new URLSearchParams({ projectId: project.id })
+    // The first prompt goes out only on a genuinely fresh open — never on a reconnect.
+    if (effectivePrompt && !resumingRef.current) params.set('prompt', effectivePrompt)
+    if (resumingRef.current && lastIdRef.current) params.set('after', lastIdRef.current)
+    const es = new EventSource(`${API}/agent/stream?${params}`, { withCredentials: true }) // carries the auth cookie
     esRef.current = es
-    setConnection('open')
     es.onopen = () => { retriesRef.current = 0; setConnection('open') }
-    // Never let EventSource reconnect by itself: its retry reuses this URL — first prompt
-    // included, which ran the prompt twice — and it would keep the dead session's state on
-    // screen. Close it and reopen cleanly (no prompt, fresh state), backing off; after a
-    // few failures, stop and offer the Reconnect button.
+    // Never let EventSource reconnect by itself: its retry reuses this URL (first prompt
+    // included) and knows nothing of resume. Close it and reconnect ourselves with the last
+    // event id, backing off; after a few failures, stop and offer the Reconnect button.
     es.onerror = () => {
+      // Diagnostic: dropped streams have killed builds and the cause is still unknown.
+      console.warn('[orin] stream error', { at: new Date().toISOString(), readyState: es.readyState, lastEventId: lastIdRef.current })
       es.close()
       const attempt = retriesRef.current++
       if (attempt >= 4) { setConnection('closed'); return }
       setConnection('reconnecting')
-      retryTimerRef.current = setTimeout(reopen, Math.min(1000 * 2 ** attempt, 8000))
+      retryTimerRef.current = setTimeout(reconnect, Math.min(1000 * 2 ** attempt, 8000))
     }
     es.onmessage = (msg) => {
+      if (msg.lastEventId) lastIdRef.current = msg.lastEventId
       const e: AgentEvent = JSON.parse(msg.data)
       if (e.event === 'ping') return
+      if (e.event === 'attached') {
+        // A reconnect that didn't rejoin (the grace period ran out): what's on screen
+        // belongs to a session that no longer exists — reset and reload from the database.
+        if (resumingRef.current && !e.resumed) {
+          setEvents([]); setPreviewUrl(null); setSessionId(null); setPending(null)
+          loadHistory()
+        }
+        resumingRef.current = false
+        return
+      }
       if (e.sessionId) setSessionId((prev) => prev ?? e.sessionId!)
       setEvents((prev) => {
         // A follow-up is shown optimistically the moment it's sent; when the server echoes
@@ -95,11 +128,11 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
       if (e.event === 'final') refreshSnapshots() // a run finished — new rewind points
     }
     return () => {
-      es.close() // leaving disconnects → the server tears the sandbox down
+      es.close() // leaving detaches; the server keeps the session for a grace period
       if (retryTimerRef.current) clearTimeout(retryTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.id, reloadKey])
+  }, [project.id, reloadKey, connKey])
 
   useEffect(() => { feedEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [events.length])
 
@@ -128,6 +161,8 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   // to re-fetch, the preview URL of a torn-down sandbox — so all of it is cleared.
   function reopen() {
     esRef.current?.close()
+    resumingRef.current = false
+    lastIdRef.current = ''
     setEvents([]); setPreviewUrl(null); setSessionId(null); setPending(null); setShowHistory(false)
     setReloadKey((k) => k + 1)
   }
@@ -246,7 +281,7 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
               {connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
             </span>
             {connection === 'closed' && (
-              <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; reopen() }}>Reconnect</Button>
+              <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; reconnect() }}>Reconnect</Button>
             )}
           </div>
         )}

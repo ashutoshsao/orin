@@ -3,7 +3,8 @@ import { cors } from "@elysiajs/cors";
 import { and, asc, desc, eq, gt, gte } from "drizzle-orm";
 import { db, message, project, snapshot } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
-import { AgentSession, type AgentEvent } from "./agent/agent";
+import { AgentSession } from "./agent/agent";
+import { closeLive, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
@@ -18,9 +19,7 @@ async function getUserId(request: Request): Promise<string | null> {
   return session?.user?.id ?? null;
 }
 
-// Live sessions, keyed by id, so follow-up POSTs can find the right session.
-// A session is registered when its stream opens and removed on disconnect.
-const sessions = new Map<string, AgentSession>();
+// Live sessions (one per project, outliving individual streams) live in liveSessions.ts.
 
 // Bridge push→pull: AgentSession pushes events via its onEvent callback, but an
 // Elysia SSE handler pulls by `yield`ing. This queue buffers pushes and lets the
@@ -129,8 +128,7 @@ export const app = new Elysia()
   )
   // Rewind a project to a chosen snapshot: point it at that snapshot's bundle, discard
   // the conversation and snapshots past it (the abandoned branch), so the next reopen
-  // restores that codebase + the clamped context. The client should reopen afterwards
-  // (a stale live session, if any, is harmless — it's torn down on disconnect).
+  // restores that codebase + the clamped context. The client reopens afterwards.
   .post(
     "/projects/:id/rewind",
     async ({ params, body, request, set }) => {
@@ -149,6 +147,9 @@ export const app = new Elysia()
         .limit(1);
       if (!snap) { set.status = 404; return { error: "snapshot_not_found" }; }
 
+      // Sessions now outlive their stream, so a live one would still hold the pre-rewind
+      // code and history — close it first; the page's reopen then starts a fresh one.
+      await closeLive(params.id);
       await db
         .update(project)
         .set({ latestSnapshotKey: snap.key, durableCodebaseN: snap.n, updatedAt: new Date() })
@@ -178,38 +179,38 @@ export const app = new Elysia()
         yield sse({ data: { event: "project_not_found" } });
         return;
       }
-      // Resume: load any prior conversation to seed the session (empty for a new project).
-      const initialContext = await loadContext(query.projectId);
+      // Attach to the project's live session, or start one. The session is owned by the
+      // server (liveSessions.ts); this stream is only a subscriber to it.
+      const projectId = query.projectId;
+      const live = getLive(projectId) ?? startLive(projectId, async (onEvent) => {
+        // Resume: load any prior conversation to seed the session (empty for a new project).
+        const initialContext = await loadContext(projectId);
+        const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
+        const session = await AgentSession.create(provider, {
+          onEvent,
+          persist: messagePersister(projectId),
+          enqueueSnapshot: snapshotEnqueuer(projectId, userId),
+          restoreSnapshot: snapshotLoader(projectId),
+          initialContext,
+        });
+        return {
+          session,
+          afterReady: async () => {
+            // Start the dev server in parallel with the first build so the preview is
+            // live *while* the agent edits (Vite HMR shows progress), not only after.
+            const preview = session.startPreview(); // broadcasts preview_ready
+            // `prompt` is only the *first* build of a brand-new project — never re-run for
+            // a project that already has a conversation (a reconnect may carry it again).
+            if (query.prompt && initialContext.length === 0) await session.submit(query.prompt);
+            await preview.catch(() => { }); // settle/surface any preview startup error
+          },
+        };
+      });
 
-      const queue = createEventQueue<AgentEvent>();
-      let session: AgentSession | undefined;
-
-      // Run the agent in the background; its events flow into the queue.
-      const runner = (async () => {
-        try {
-          const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
-          session = await AgentSession.create(provider, {
-            onEvent: (e) => queue.push(e),
-            persist: messagePersister(query.projectId),
-            enqueueSnapshot: snapshotEnqueuer(query.projectId, userId),
-            restoreSnapshot: snapshotLoader(query.projectId),
-            initialContext,
-          });
-          sessions.set(session.id, session); // now discoverable by follow-up POSTs
-          // Start the dev server in parallel with the first build so the preview is
-          // live *while* the agent edits (Vite HMR shows progress), not only after.
-          const preview = session.startPreview(); // pushes preview_ready (with the URL)
-          // `prompt` is only the *first* build of a brand-new project. If the project
-          // already has a conversation, this is a reconnect — EventSource retries reuse
-          // the original URL, prompt included — so running it again would duplicate it.
-          if (query.prompt && initialContext.length === 0) await session.submit(query.prompt);
-          await preview.catch(() => { }); // settle/surface any preview startup error
-        } catch (e) {
-          queue.push({ ts: new Date().toISOString(), sessionId: "", event: "stream_error", message: String(e) });
-        }
-        // Deliberately no finish() — keep the stream open so the sandbox stays
-        // alive for the iframe and for follow-ups. Heartbeats hold the connection.
-      })();
+      const queue = createEventQueue<StreamEvent>();
+      const sub = { push: (e: StreamEvent) => queue.push(e) };
+      const after = query.after !== undefined ? Number(query.after) : undefined;
+      const { replay, resumed } = subscribe(live, sub, Number.isFinite(after) ? after : undefined);
 
       // Heartbeat so idle proxies don't drop the connection after preview_ready.
       const heartbeat = setInterval(
@@ -217,30 +218,37 @@ export const app = new Elysia()
         15_000,
       );
 
+      let closeReason = "client_gone";
       try {
+        // First, tell the page whether it rejoined a running session (keep its state) or
+        // got a new one (the old one expired — reset). Then what it missed, then live.
+        yield sse({ data: { ts: new Date().toISOString(), sessionId: live.session?.id ?? "", event: "attached", resumed } });
+        for (const e of replay) yield sse({ id: e.id, data: e });
         for await (const event of queue.drain()) {
-          // Send as default (unnamed) SSE messages so the browser's single
-          // `EventSource.onmessage` catches them all — the event type already
-          // lives inside the payload (`data.event`). Named SSE events would
-          // require a per-type addEventListener on the client.
-          yield sse({ data: event });
+          // Default (unnamed) SSE messages so the browser's single `onmessage` catches all
+          // of them — the type lives in the payload. `id` enables resume on reconnect.
+          yield sse(event.id !== undefined ? { id: event.id, data: event } : { data: event });
         }
+      } catch (e) {
+        closeReason = `error: ${String(e)}`;
+        throw e;
       } finally {
-        // Client disconnected → Elysia stops this generator and runs finally.
-        // Tear the sandbox down (this is what ties its lifetime to the connection).
+        // The page went away (or the stream failed). Detach only — the session keeps
+        // running, and is closed after a grace period if nobody reattaches.
         clearInterval(heartbeat);
         queue.finish();
-        if (session) sessions.delete(session.id);
-        // close() BEFORE awaiting runner: it flushes any parked ask_user promise,
-        // so a turn blocked waiting for an answer unwinds instead of deadlocking.
-        await session?.close().catch(() => { });
-        await runner.catch(() => { });
+        unsubscribe(live, sub);
+        // Diagnostic: dropped streams have killed builds before and the cause is still
+        // unknown, so every close says why and how many viewers remain.
+        console.log(JSON.stringify({ ts: new Date().toISOString(), event: "stream_closed", projectId, reason: closeReason, remaining: live.subscribers.size }));
       }
     },
     {
       query: t.Object({
         projectId: t.String(),
         prompt: t.Optional(t.String({ minLength: 1 })),
+        // Last event id the page saw — resume from just after it.
+        after: t.Optional(t.String()),
       }),
     },
   )
@@ -250,7 +258,7 @@ export const app = new Elysia()
   .post(
     "/agent/:sessionId/message",
     ({ params, body, set }) => {
-      const session = sessions.get(params.sessionId);
+      const session = getSession(params.sessionId);
       if (!session) {
         set.status = 404;
         return { error: "session not found" };
@@ -267,7 +275,7 @@ export const app = new Elysia()
   .post(
     "/agent/:sessionId/answer",
     ({ params, body, set }) => {
-      const session = sessions.get(params.sessionId);
+      const session = getSession(params.sessionId);
       if (!session) {
         set.status = 404;
         return { error: "session not found" };

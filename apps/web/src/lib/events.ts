@@ -64,6 +64,9 @@ export type FeedItem =
 export function groupFeed(events: AgentEvent[]): FeedItem[] {
   const out: FeedItem[] = []
   for (const e of events) {
+    // `run_active` is state the server sends a freshly-attached page ("a run is already
+    // in progress, at step N") — it drives the status bar, but isn't something to show.
+    if (e.event === 'run_active') continue
     // A new sandbox after earlier history means the project was reopened. Mark the
     // boundary, so the new session's telemetry ("environment ready", "restored") starts
     // its own group instead of reading as part of whatever run came before it.
@@ -118,6 +121,8 @@ export function runStatus(
   events.forEach((e, i) => {
     if (!e.sessionId && !e.local) return
     if (e.event === 'run_start') { lastStart = i; step = undefined }
+    // Joined a session mid-run: the server tells us the run is live and which step it's on.
+    else if (e.event === 'run_active') { lastStart = i; step = typeof e.step === 'number' ? e.step : undefined }
     else if (RUN_ENDS.has(e.event)) { lastEnd = i; endedBy = e.event }
     else if (e.event === 'llm_call' && typeof e.iteration === 'number') step = e.iteration
   })
