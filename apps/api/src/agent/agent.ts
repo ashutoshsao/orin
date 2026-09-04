@@ -2,6 +2,7 @@ import { Sandbox } from "e2b";
 import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
+import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
 
 const TEMPLATE = "orin-react-workspace-dev";
 // Metadata stamped on every sandbox this API creates, so a freshly booted server can find
@@ -164,27 +165,30 @@ export class AgentSession {
     }
   }
 
-  // Snapshot the workspace as one round's git commit and build its bundle (M5b). Returns
-  // { hash, bundle } when files changed, or null for a no-op round (ask_user / final-only
-  // — git has nothing to commit). Builds a FULL, self-contained bundle (all history from
-  // HEAD) so restore is a single clone and rewind stays possible. Best-effort: a git
-  // hiccup is logged, not thrown, so it can never block context persistence.
+  // Snapshot the workspace as one round's git commit and build its bundle (M5b; see
+  // snapshot.ts). Returns { hash, bundle } when files changed, or null for a no-op round
+  // (ask_user / final-only — git has nothing to commit) or an oversize one. Best-effort: a
+  // git hiccup is logged, not thrown, so it can never block context persistence.
+  // Must run BEFORE flush(): an oversize note is appended to this round's tool result.
   private async snapshot(): Promise<{ hash: string; bundle: Uint8Array } | null> {
     try {
-      // Stage everything, commit only if the index changed; echo a sentinel otherwise so
-      // we can tell a new commit from a no-op round.
-      const res = await this.sandbox.commands.run(
-        'git add -A; if git diff --cached --quiet; then echo NOCHANGE; else git commit -q -m "round" && git rev-parse HEAD; fi',
-        { cwd: WORKDIR },
-      );
-      const out = res.stdout.trim();
-      if (out === "NOCHANGE" || out === "") return null;
-      this.latestCommit = out;
-      const bundlePath = `/tmp/${out}.bundle`;
-      await this.sandbox.commands.run(`git bundle create ${bundlePath} HEAD`, { cwd: WORKDIR });
-      const bundle = await this.sandbox.files.read(bundlePath, { format: "bytes" });
-      this.log("snapshot", { commit: out, bytes: bundle.length });
-      return { hash: out, bundle };
+      const snap = await snapshotRound(this.sandbox);
+      if (snap.kind === "nochange") return null;
+      this.latestCommit = snap.hash;
+      if (snap.kind === "oversize") {
+        // Not pushed: enqueueRound sends a `mark` for this unpushed hash, which the worker
+        // won't honour, so durableCodebaseN stays put and resume clamps to the last saved
+        // round. Tell the model (when it has a next call to see it) so it can shrink the repo.
+        const last = this.context[this.context.length - 1];
+        if (last?.role === "tool" && last.content.length) {
+          const result = last.content[last.content.length - 1];
+          result.content = `${result.content}\n\n${oversizeNote(snap.bytes)}`;
+        }
+        this.log("snapshot_skipped", { commit: snap.hash, bytes: snap.bytes, maxBytes: SNAPSHOT_MAX_BYTES });
+        return null;
+      }
+      this.log("snapshot", { commit: snap.hash, bytes: snap.bundle.length });
+      return { hash: snap.hash, bundle: snap.bundle };
     } catch (e) {
       this.log("snapshot_error", { message: String(e) });
       return null;

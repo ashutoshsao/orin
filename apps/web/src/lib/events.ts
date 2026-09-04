@@ -39,6 +39,7 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
     case 'llm_call': return { label: 'thinking', detail: e.status === 'toolCall' ? '' : String(e.status ?? '') }
     case 'tool_call': return { label: 'ran', detail: tools.map((t) => `${t.name}${t.ok ? '' : ' (failed)'}`).join(', ') }
     case 'snapshot': return { label: 'snapshot', detail: String(e.commit ?? '').slice(0, 7) }
+    case 'snapshot_skipped': return { label: 'not saved', detail: `workspace ${(Number(e.bytes) / 1024 / 1024).toFixed(1)} MB is over the snapshot limit` }
     case 'preview_ready': return { label: 'preview', detail: e.httpStatus === '200' ? 'live' : `status ${e.httpStatus}` }
     case 'sandbox_closed': return { label: 'environment', detail: 'closed' }
     default: return { label: e.event.replace(/_/g, ' '), detail: '' }
