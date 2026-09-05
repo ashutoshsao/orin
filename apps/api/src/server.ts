@@ -1,11 +1,11 @@
 import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { and, asc, desc, eq, gt, gte } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { db, message, project, snapshot } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession } from "./agent/agent";
 import { closeLive, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
-import { loadContext, messagePersister, snapshotLoader } from "./persistence/store";
+import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth } from "./auth";
@@ -150,12 +150,7 @@ export const app = new Elysia()
       // Sessions now outlive their stream, so a live one would still hold the pre-rewind
       // code and history — close it first; the page's reopen then starts a fresh one.
       await closeLive(params.id);
-      await db
-        .update(project)
-        .set({ latestSnapshotKey: snap.key, durableCodebaseN: snap.n, updatedAt: new Date() })
-        .where(eq(project.id, params.id));
-      await db.delete(message).where(and(eq(message.projectId, params.id), gte(message.seq, snap.n)));
-      await db.delete(snapshot).where(and(eq(snapshot.projectId, params.id), gt(snapshot.n, snap.n)));
+      await rewindProject(params.id, snap.n);
       return { ok: true, n: snap.n };
     },
     { body: t.Object({ snapshotId: t.String() }) },
@@ -185,11 +180,12 @@ export const app = new Elysia()
       const live = getLive(projectId) ?? startLive(projectId, async (onEvent) => {
         // Resume: load any prior conversation to seed the session (empty for a new project).
         const initialContext = await loadContext(projectId);
+        const [{ rewindGen }] = await db.select({ rewindGen: project.rewindGen }).from(project).where(eq(project.id, projectId));
         const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
         const session = await AgentSession.create(provider, {
           onEvent,
           persist: messagePersister(projectId),
-          enqueueSnapshot: snapshotEnqueuer(projectId, userId),
+          enqueueSnapshot: snapshotEnqueuer(projectId, userId, rewindGen),
           restoreSnapshot: snapshotLoader(projectId),
           initialContext,
         });

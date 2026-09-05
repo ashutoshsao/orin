@@ -25,13 +25,19 @@ export const project = pgTable("project", {
   // marker. On sandbox-death restore, context is clamped to this so replayed history
   // never runs ahead of the restorable codebase (M5b step 5).
   durableCodebaseN: integer("durable_codebase_n"),
+  // Bumped by every rewind. Snapshot jobs carry the value their session started with; the
+  // worker drops any job whose generation is stale, so a push queued before a rewind can't
+  // land after it (re-adding a row past the rewind point / moving latestSnapshotKey).
+  rewindGen: integer("rewind_gen").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 // One pushed codebase snapshot = a rewind point. Written by the snapshot worker per
 // push (M5b): `commitHash` is the git commit, `n` the context length it covers, `key`
-// the R2 bundle. Rewinding to a snapshot restores its bundle and truncates context to n.
+// the R2 bundle it was pushed in. Rewind no longer restores `key` (older bundles are pruned,
+// 7.1): every kept row's commit is in the newest bundle, so restore fetches that and resets
+// to the highest-n row's commit. `key` is kept as a record, not relied on.
 export const snapshot = pgTable("snapshot", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   projectId: text("project_id").notNull().references(() => project.id),

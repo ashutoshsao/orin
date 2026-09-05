@@ -3,6 +3,7 @@ import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
+import type { RestorePoint } from "../persistence/store";
 
 const TEMPLATE = "orin-react-workspace-dev";
 // Metadata stamped on every sandbox this API creates, so a freshly booted server can find
@@ -59,7 +60,7 @@ export type CreateOptions = {
   initialContext?: ContextType;
   // Fetch the latest codebase snapshot bundle to rehydrate the sandbox on resume, or
   // null if the project has none (M5b). Called once after the sandbox boots.
-  restoreSnapshot?: () => Promise<Uint8Array | null>;
+  restoreSnapshot?: () => Promise<RestorePoint | null>;
 };
 
 export class AgentSession {
@@ -112,27 +113,30 @@ export class AgentSession {
     // Resume with files: rehydrate the workspace from the last pushed snapshot, so the
     // agent (and preview) continue from the actual codebase, not the bare template.
     if (opts.restoreSnapshot) {
-      const bundle = await opts.restoreSnapshot();
-      if (bundle) await session.restore(bundle);
+      const point = await opts.restoreSnapshot();
+      if (point) await session.restore(point);
     }
     return session;
   }
 
   // Rehydrate the workspace from a snapshot bundle (M5b). The sandbox already holds the
   // baked template repo (same base commit the bundle extends), so we fetch the bundle's
-  // history into it and hard-reset the working tree to the snapshot's HEAD — reusing the
-  // existing .git and node_modules. Then `bun install` reconciles any deps the agent
-  // added since the base (node_modules is gitignored, so it isn't in the bundle).
-  private async restore(bundle: Uint8Array) {
+  // history into it and hard-reset the working tree to the target commit — the bundle's
+  // HEAD, or an older commit in its history after a rewind (7.1) — reusing the existing
+  // .git and node_modules. Then `bun install` reconciles any deps the agent added since
+  // the base (node_modules is gitignored, so it isn't in the bundle).
+  private async restore({ bundle, commit }: RestorePoint) {
     try {
       const bundlePath = "/tmp/restore.bundle";
+      // Only a full hash from our own DB is interpolated into the shell; anything else
+      // falls back to the bundle's HEAD.
+      const target = commit && /^[0-9a-f]{40}$/.test(commit) ? commit : "FETCH_HEAD";
       // files.write takes string | ArrayBuffer | Blob | ReadableStream (not a raw
       // Uint8Array), so wrap the bytes in a Blob.
       await this.sandbox.files.write(bundlePath, new Blob([bundle]));
-      const reset = await this.sandbox.commands.run(
-        `git fetch -q ${bundlePath} HEAD && git reset -q --hard FETCH_HEAD && git rev-parse HEAD`,
-        { cwd: WORKDIR },
-      );
+      const reset = await this.sandbox.commands
+        .run(`git fetch -q ${bundlePath} HEAD && git reset -q --hard ${target} && git rev-parse HEAD`, { cwd: WORKDIR })
+        .finally(() => this.sandbox.commands.run(`rm -f ${bundlePath}`).catch(() => {}));
       await this.sandbox.commands.run("bun install", { cwd: WORKDIR });
       // HEAD now equals the snapshot we restored from; seed latestCommit so a no-op first
       // round can `mark` against it. durableCodebaseN in the DB already reflects this point.

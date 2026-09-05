@@ -18,6 +18,10 @@ export const r2 = new S3Client({
 
 // Codebase snapshots live under a per-user, per-project prefix; the commit hash names
 // the object so a project can hold many snapshots and the DB just points at the latest.
+export function snapshotPrefix(userId: string, projectId: string): string {
+  return `users/${userId}/projects/${projectId}/snapshots/`;
+}
+
 export function snapshotKey(userId: string, projectId: string, commitHash: string): string {
-  return `users/${userId}/projects/${projectId}/snapshots/${commitHash}.bundle`;
+  return `${snapshotPrefix(userId, projectId)}${commitHash}.bundle`;
 }

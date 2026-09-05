@@ -1,5 +1,5 @@
-import { db, message, project } from "@repo/db";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { db, message, project, snapshot } from "@repo/db";
+import { and, asc, desc, eq, gt, gte, sql } from "drizzle-orm";
 import type { ContextType, MessageType } from "../agent/types";
 import { r2 } from "./r2";
 
@@ -26,18 +26,46 @@ export function messagePersister(projectId: string) {
 // The R2 push + latestSnapshotKey/durableCodebaseN updates now live in the background
 // worker (snapshotQueue.ts), off the agent's hot path.
 
-// Fetch the latest codebase bundle for a project from R2, or null if it has none
-// (new project, or nothing pushed yet). Injected into AgentSession to rehydrate the
-// sandbox's files on resume. Returns raw bundle bytes; the session unpacks them.
+// What to rehydrate a sandbox from: the newest bundle, and the commit to land on. Injected
+// into AgentSession; null for a project with nothing pushed yet.
+export type RestorePoint = { bundle: Uint8Array; commit: string | null };
+
+// The bundle is always the NEWEST one (`latestSnapshotKey`; rewind leaves it alone), and the
+// commit is the highest-n snapshot row's — normally that bundle's HEAD, but after a rewind
+// the rewind target, which the newest bundle still contains (every kept row is an ancestor
+// of it). This is what lets older bundles be pruned without breaking rewind (7.1).
 export function snapshotLoader(projectId: string) {
-  return async (): Promise<Uint8Array | null> => {
+  return async (): Promise<RestorePoint | null> => {
     const [row] = await db
       .select({ key: project.latestSnapshotKey })
       .from(project)
       .where(eq(project.id, projectId));
     if (!row?.key) return null;
-    return await r2.file(row.key).bytes();
+    const [target] = await db
+      .select({ commit: snapshot.commitHash })
+      .from(snapshot)
+      .where(eq(snapshot.projectId, projectId))
+      .orderBy(desc(snapshot.n))
+      .limit(1);
+    return { bundle: await r2.file(row.key).bytes(), commit: target?.commit ?? null };
   };
+}
+
+// Rewind a project to the snapshot covering `n` messages: drop later messages and rewind
+// points. latestSnapshotKey is left alone — the newest bundle contains the target commit,
+// and restore resets to the highest-n row, which after the delete is the target (7.1).
+// Bumping rewindGen first takes the project row lock, so an in-flight worker push either
+// commits before (its row is then deleted here) or sees the new gen and drops itself.
+// The caller closes the live session first.
+export async function rewindProject(projectId: string, n: number) {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(project)
+      .set({ durableCodebaseN: n, rewindGen: sql`${project.rewindGen} + 1`, updatedAt: new Date() })
+      .where(eq(project.id, projectId));
+    await tx.delete(message).where(and(eq(message.projectId, projectId), gte(message.seq, n)));
+    await tx.delete(snapshot).where(and(eq(snapshot.projectId, projectId), gt(snapshot.n, n)));
+  });
 }
 
 // Load a project's conversation back into a ContextType for resume, clamped to the

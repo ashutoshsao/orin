@@ -1,0 +1,1 @@
+ALTER TABLE "project" ADD COLUMN "rewind_gen" integer DEFAULT 0 NOT NULL;
