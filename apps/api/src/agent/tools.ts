@@ -23,14 +23,14 @@ export const tools = [
   }
 ]
 
-export async function toolExecution(toolCalls: ToolCall[]) {
+export async function toolExecution(toolCalls: ToolCall[], cwd: string) {
   const toolResponses: { id: string, content: string }[] = [];
   for (let i = 0; i < toolCalls.length; i++) {
     switch (toolCalls[i].name) {
       case "bash_tool": {
         try {
           const { command } = toolCalls[i].argument;
-          const response = await $`sh -c ${command}`.text();
+          const response = await $`sh -c ${command}`.cwd(cwd).text();
           toolResponses.push(
             {
               id: toolCalls[i].id,

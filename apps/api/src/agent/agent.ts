@@ -3,10 +3,11 @@ import { config } from "./config";
 import { DeepSeekProvider } from "./LLM_Providers/DeepSeek/DeepSeek.interface";
 import { toolExecution, tools } from "./tools";
 import { LLMProvider, ToolDefinition } from "./types";
+import { scaffoldWorkspace } from "../sandbox/scaffoldWorkspace";
 
 const llmProvider = new DeepSeekProvider("deepseek-v4-flash", "low");
 
-async function agentRun(llmProvider: LLMProvider, tools: ToolDefinition[], userPrompt: string, config: Record<string, string>) {
+async function agentRun(llmProvider: LLMProvider, tools: ToolDefinition[], userPrompt: string, config: Record<string, string>, cwd: string) {
 
   //1. user input
   context.push({
@@ -40,7 +41,7 @@ async function agentRun(llmProvider: LLMProvider, tools: ToolDefinition[], userP
         role: "assistant", content: response.content
       })
       console.log(`TOOL CALL REQUESTED\n${JSON.stringify(response.content, null, 2)}\n`);
-      const toolResponse = await toolExecution(response.content.toolCalls)
+      const toolResponse = await toolExecution(response.content.toolCalls, cwd)
       //add tool responses to context
       context.push({
         role: "tool", content: toolResponse
@@ -59,4 +60,5 @@ async function agentRun(llmProvider: LLMProvider, tools: ToolDefinition[], userP
   }
 }
 
-agentRun(llmProvider, tools, "list files, then read package.json, then tell me the name field", config);
+const workspace = await scaffoldWorkspace();
+agentRun(llmProvider, tools, "build me a todo app", config, workspace);
