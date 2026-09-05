@@ -1,64 +1,79 @@
-import { context } from "./context";
-import { config } from "./config";
-import { DeepSeekProvider } from "./LLM_Providers/DeepSeek/DeepSeek.interface";
+import { ContextType, LLMProvider } from "./types";
 import { toolExecution, tools } from "./tools";
-import { LLMProvider, ToolDefinition } from "./types";
-import { scaffoldWorkspace } from "../sandbox/scaffoldWorkspace";
+import { config } from "./config";
 
-const llmProvider = new DeepSeekProvider("deepseek-v4-flash", "low");
+export class AgentSession {
+  private context: ContextType;
+  private sessionId: string;
 
-async function agentRun(llmProvider: LLMProvider, tools: ToolDefinition[], userPrompt: string, config: Record<string, string>, cwd: string) {
+  constructor(private llmProvider: LLMProvider, private cwd: string) {
+    this.sessionId = crypto.randomUUID();
+    this.context = [
+      { role: "system", content: "You are a helpful assistant, also you are provided with tools you can provide with commands that can be execute" },
+    ];
+  }
 
-  //1. user input
-  context.push({
-    role: "user", content: userPrompt
-  })
+  private log(event: string, data: Record<string, unknown> = {}) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), sessionId: this.sessionId, event, ...data }));
+  }
 
-  console.log(`CONTEXT BEFORE LLM\n${JSON.stringify(context, null, 2)}\n`)
+  async run(userPrompt: string) {
+    this.context.push({
+      role: "user", content: userPrompt
+    })
 
-  let start = parseInt(config.initIteration)
-  let end = parseInt(config.maxIteration)
+    this.log("run_start", { userPrompt })
 
-  while (start <= end) {
+    let start = parseInt(config.initIteration)
+    let end = parseInt(config.maxIteration)
 
-    const response = await llmProvider.callLLM(context, tools);
+    while (start <= end) {
 
-    console.log(`ITERATION NO: ${start}`)
+      const llmStart = performance.now();
+      const response = await this.llmProvider.callLLM(this.context, tools);
+      const llmDurationMs = Math.round(performance.now() - llmStart);
 
-    console.log(`WHOLE RESPONSE OBJECT\n${JSON.stringify(response, null, 2)}\n`);
+      this.log("llm_call", { iteration: start, status: response.status, durationMs: llmDurationMs, usage: response.usage })
 
-    // add assistant response to context
-    if (response.status === "done") {
+      if (response.status === "done") {
 
-      context.push({ role: "assistant", content: response.content });
-      console.log(`FINAL ANSWER\n${JSON.stringify(response.content, null, 2)}\n`);
-      break;
+        this.context.push({ role: "assistant", content: response.content });
+        this.log("final", { iteration: start, content: response.content });
+        break;
 
-    } else if (response.status === "toolCall") {
+      } else if (response.status === "toolCall") {
 
-      //add requested tools to context
-      context.push({
-        role: "assistant", content: response.content
-      })
-      console.log(`TOOL CALL REQUESTED\n${JSON.stringify(response.content, null, 2)}\n`);
-      const toolResponse = await toolExecution(response.content.toolCalls, cwd)
-      //add tool responses to context
-      context.push({
-        role: "tool", content: toolResponse
-      })
-      console.log(`TOOL RESULTS\n${JSON.stringify(toolResponse, null, 2)}\n`);
+        this.context.push({
+          role: "assistant", content: response.content
+        })
 
-    } else if (response.status === "error") {
-      console.log(response.content)
-      break;
-    } else {
-      console.log(response.content)
-      break;
+        const toolStart = performance.now();
+        const toolResponse = await toolExecution(response.content.toolCalls, this.cwd)
+        const toolDurationMs = Math.round(performance.now() - toolStart);
+
+        this.context.push({
+          role: "tool", content: toolResponse
+        })
+
+        this.log("tool_call", {
+          iteration: start,
+          durationMs: toolDurationMs,
+          tools: response.content.toolCalls.map((t, i) => ({ name: t.name, ok: toolResponse[i].ok }))
+        })
+
+      } else if (response.status === "error") {
+        this.log("error", { iteration: start, content: response.content });
+        break;
+      } else {
+        this.log("exception", { iteration: start, content: response.content });
+        break;
+      }
+
+      start++
     }
 
-    start++
+    if (start > end) {
+      this.log("max_iterations_reached", { iteration: start });
+    }
   }
 }
-
-const workspace = await scaffoldWorkspace();
-agentRun(llmProvider, tools, "build me a todo app", config, workspace);
