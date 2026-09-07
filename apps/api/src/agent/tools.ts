@@ -3,7 +3,7 @@ import { ToolCall, ToolResultType } from "./types";
 
 // E2B's commands.run defaults cwd to the user's home (/home/user), NOT the image
 // WORKDIR — so we pass the app dir explicitly to land where the template baked deps.
-const WORKDIR = "/home/user/react-template";
+export const WORKDIR = "/home/user/react-template";
 // A build/install can outrun the 60s per-command default; give it room.
 const COMMAND_TIMEOUT_MS = 180_000;
 
