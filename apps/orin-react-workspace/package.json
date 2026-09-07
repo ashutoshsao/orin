@@ -1,0 +1,11 @@
+{
+  "name": "orin-react-workspace",
+  "private": true,
+  "scripts": {
+    "e2b:build:dev": "bun ./build.dev.ts",
+    "e2b:build:prod": "bun ./build.prod.ts"
+  },
+  "dependencies": {
+    "e2b": "^2.46.1"
+  }
+}
