@@ -5,6 +5,10 @@ import { AgentSession, type AgentEvent } from "./agent/agent";
 
 const PORT = 4000;
 
+// Live sessions, keyed by id, so follow-up POSTs can find the right session.
+// A session is registered when its stream opens and removed on disconnect.
+const sessions = new Map<string, AgentSession>();
+
 // Bridge push→pull: AgentSession pushes events via its onEvent callback, but an
 // Elysia SSE handler pulls by `yield`ing. This queue buffers pushes and lets the
 // generator await the next one. `finish()` ends the async iteration.
@@ -37,7 +41,7 @@ function createEventQueue<T>() {
 }
 
 export const app = new Elysia()
-  .use(cors()) // dev: web (5173) → api (4000) are different origins
+  .use(cors())
   .get(
     "/agent/stream",
     async function* ({ query }) {
@@ -49,13 +53,14 @@ export const app = new Elysia()
         try {
           const provider = new DeepSeekProvider("deepseek-v4-flash", "low");
           session = await AgentSession.create(provider, (e) => queue.push(e));
-          await session.run(query.prompt);
+          sessions.set(session.id, session); // now discoverable by follow-up POSTs
+          await session.submit(query.prompt); // first turn
           await session.startPreview(); // pushes preview_ready (with the URL)
         } catch (e) {
           queue.push({ ts: new Date().toISOString(), sessionId: "", event: "stream_error", message: String(e) });
         }
         // Deliberately no finish() — keep the stream open so the sandbox stays
-        // alive for the iframe. Heartbeats hold the connection until disconnect.
+        // alive for the iframe and for follow-ups. Heartbeats hold the connection.
       })();
 
       // Heartbeat so idle proxies don't drop the connection after preview_ready.
@@ -77,12 +82,31 @@ export const app = new Elysia()
         // Tear the sandbox down (this is what ties its lifetime to the connection).
         clearInterval(heartbeat);
         queue.finish();
-        await runner.catch(() => {});
-        await session?.close().catch(() => {});
+        await runner.catch(() => { });
+        if (session) sessions.delete(session.id);
+        await session?.close().catch(() => { });
       }
     },
     {
       query: t.Object({ prompt: t.String({ minLength: 1 }) }),
+    },
+  )
+  // Follow-up prompt for an existing session. Fire-and-forget: submit() queues it
+  // (applied at the next turn boundary) and its events flow down that session's
+  // already-open SSE stream — so nothing is returned here but an ack.
+  .post(
+    "/agent/:sessionId/message",
+    ({ params, body, set }) => {
+      const session = sessions.get(params.sessionId);
+      if (!session) {
+        set.status = 404;
+        return { error: "session not found" };
+      }
+      session.submit(body.prompt); // not awaited — events surface on the SSE stream
+      return { ok: true };
+    },
+    {
+      body: t.Object({ prompt: t.String({ minLength: 1 }) }),
     },
   )
   .listen(PORT);

@@ -21,6 +21,13 @@ export type AgentEvent = {
 export class AgentSession {
   private context: ContextType;
   private sessionId: string;
+  // One turn at a time: `running` guards the drain loop, `pending` holds prompts
+  // that arrived while a turn was in flight (applied at the next turn boundary).
+  private running = false;
+  private pending: string[] = [];
+  // Set on close() so an in-flight loop stops instead of hammering the LLM against
+  // a dead sandbox after the client disconnects.
+  private closed = false;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -48,6 +55,7 @@ export class AgentSession {
 
   // Sandboxes are live VMs on E2B's infra — kill it when the session is done.
   async close() {
+    this.closed = true; // stop any in-flight loop before/while we tear down
     await this.sandbox.kill();
     this.log("sandbox_closed", { sandboxId: this.sandbox.sandboxId });
   }
@@ -84,6 +92,28 @@ export class AgentSession {
     return { url, httpStatus };
   }
 
+  // Stable id for the session registry / routing follow-up POSTs to this session.
+  get id() {
+    return this.sessionId;
+  }
+
+  // Submit a prompt (initial or follow-up). If a turn is already running, the
+  // prompt is queued and picked up at the next turn boundary — never injected
+  // mid-loop (that would risk the tool_calls→result invariant). Resolves when the
+  // queue has fully drained (i.e. the session is idle again).
+  async submit(prompt: string) {
+    this.pending.push(prompt);
+    if (this.running) return; // an active drain loop will pick it up at the boundary
+    this.running = true;
+    try {
+      while (this.pending.length && !this.closed) {
+        await this.run(this.pending.shift()!);
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
   private log(event: string, data: Record<string, unknown> = {}) {
     const entry: AgentEvent = { ts: new Date().toISOString(), sessionId: this.sessionId, event, ...data };
     console.log(JSON.stringify(entry));
@@ -100,7 +130,7 @@ export class AgentSession {
     let start = parseInt(config.initIteration)
     let end = parseInt(config.maxIteration)
 
-    while (start <= end) {
+    while (start <= end && !this.closed) {
 
       const llmStart = performance.now();
       const response = await this.llmProvider.callLLM(this.context, tools);
