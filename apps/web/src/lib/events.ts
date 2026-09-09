@@ -3,20 +3,29 @@ import type { AgentEvent } from './api'
 // The feed mixes two very different things: the conversation (what the user asked, what
 // the agent answered) and telemetry (tool calls, snapshots, preview probes). Rendering
 // them identically is what made the old feed read as noise — so classify first.
-export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'limit' | 'activity' | 'error'
+export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'limit' | 'budget' | 'activity' | 'error'
 
 // The orchestrator's step-limit note (written by agent.ts when a run hits maxIteration).
 // Live it arrives as a `max_iterations_reached` event; after a reopen it's just a saved
 // assistant message — so recognise its wording to render both the same way. Keep this in
 // step with the note text in apps/api/src/agent/agent.ts.
 const LIMIT_NOTE = /^I hit the \d+-step limit before finishing\./
+// The account step-budget / expiry note (7a): live a `budget_exhausted` event, saved as an
+// assistant message. Unlike the step limit there's nothing to continue. Keep in step with
+// BUDGET_NOTES in apps/api/src/agent/agent.ts.
+const BUDGET_NOTE = /^This (trial's step budget is used up|account's access has expired|account has no build access), so I stopped here\./
 
 export function eventKind(e: AgentEvent): EventKind {
   switch (e.event) {
     case 'interrupted': return 'notice'
     case 'max_iterations_reached': return 'limit'
+    case 'budget_exhausted': return 'budget'
     case 'run_start': return 'user'
-    case 'final': return typeof e.content === 'string' && LIMIT_NOTE.test(e.content) ? 'limit' : 'assistant'
+    case 'final': {
+      if (typeof e.content !== 'string') return 'assistant'
+      if (LIMIT_NOTE.test(e.content)) return 'limit'
+      return BUDGET_NOTE.test(e.content) ? 'budget' : 'assistant'
+    }
     case 'ask_user': return 'question'
     case 'error':
     case 'exception':
@@ -24,6 +33,7 @@ export function eventKind(e: AgentEvent): EventKind {
     case 'unauthorized':
     case 'project_not_found':
     case 'snapshot_error':
+    case 'budget_error':
     case 'persist_error': return 'error'
     default: return 'activity'
   }
@@ -105,7 +115,7 @@ export function summarizeActivity(events: AgentEvent[]): string {
 // count (they carry a sessionId, or are our own optimistic prompt): replayed history
 // has neither, and a transcript whose last run never finished must not read as
 // "building" forever on reopen. A run starts at run_start and ends at any of RUN_ENDS.
-const RUN_ENDS = new Set(['final', 'error', 'exception', 'max_iterations_reached'])
+const RUN_ENDS = new Set(['final', 'error', 'exception', 'max_iterations_reached', 'budget_exhausted', 'budget_error'])
 
 export type RunStatus = { label: string; active: boolean; building: boolean }
 
@@ -132,6 +142,7 @@ export function runStatus(
   }
   // A run cut off by the step limit is not "live" — saying so is the whole point.
   if (endedBy === 'max_iterations_reached') return { label: 'stopped · step limit', active: false, building: false }
+  if (endedBy === 'budget_exhausted') return { label: 'stopped · trial ended', active: false, building: false }
   if (o.hasPreview) return { label: 'preview · live', active: false, building: false }
   return { label: 'starting', active: true, building: false }
 }

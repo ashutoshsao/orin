@@ -46,6 +46,21 @@ export type SnapshotJob =
   | { kind: "push"; commitHash: string; bundle: Uint8Array; n: number }
   | { kind: "mark"; commitHash: string; n: number };
 
+// Per-account step budget (7a): one step = one LLM call, reserved before the call and
+// refunded if the provider fails. Provider-/DB-agnostic — the server wires it to Postgres.
+export type StepBudget = {
+  reserve: () => Promise<{ ok: true } | { ok: false; reason: "steps" | "expired" | "no_access" }>;
+  refund: () => Promise<void>;
+};
+
+// Saved (and shown) when a run stops for budget. apps/web/src/lib/events.ts recognises this
+// wording to render it after a reopen — keep the two in step.
+const BUDGET_NOTES = {
+  steps: "This trial's step budget is used up, so I stopped here. Everything built so far is saved.",
+  expired: "This account's access has expired, so I stopped here. Everything built so far is saved.",
+  no_access: "This account has no build access, so I stopped here.",
+} as const;
+
 // How a session receives events and persists messages, plus an optional context to
 // resume from. Passed to `create` — keeps the loop unaware of HTTP and the DB.
 export type CreateOptions = {
@@ -61,6 +76,8 @@ export type CreateOptions = {
   // Fetch the latest codebase snapshot bundle to rehydrate the sandbox on resume, or
   // null if the project has none (M5b). Called once after the sandbox boots.
   restoreSnapshot?: () => Promise<RestorePoint | null>;
+  // Omitted = unmetered (CLI harnesses).
+  stepBudget?: StepBudget;
 };
 
 export class AgentSession {
@@ -80,6 +97,7 @@ export class AgentSession {
   // Latest per-round git commit in the sandbox (M5b). null until the first snapshot;
   // used as the commit a `mark` (no-op round) refers to. The worker owns durability.
   private latestCommit: string | null = null;
+  private stepBudget?: StepBudget;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -102,6 +120,7 @@ export class AgentSession {
   static async create(llmProvider: LLMProvider, opts: CreateOptions = {}) {
     const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS, metadata: SANDBOX_TAG });
     const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist, opts.enqueueSnapshot);
+    session.stepBudget = opts.stepBudget;
     if (opts.initialContext && opts.initialContext.length > 0) {
       // Resume: loaded messages (incl. the original system prompt) are already
       // persisted, so start the tail after them.
@@ -320,9 +339,32 @@ export class AgentSession {
 
     while (start <= end && !this.closed) {
 
+      // Reserve this step before spending it (7a). A refusal ends the run with a saved note;
+      // a budget-store failure ends it too — fail closed, never call the LLM unmetered.
+      if (this.stepBudget) {
+        const budget = await this.stepBudget.reserve().catch((e) => {
+          this.log("budget_error", { iteration: start, message: String(e) });
+          return null;
+        });
+        if (!budget) break;
+        if (!budget.ok) {
+          const note = BUDGET_NOTES[budget.reason];
+          this.context.push({ role: "assistant", content: note });
+          this.log("budget_exhausted", { iteration: start, reason: budget.reason, content: note });
+          const snap = await this.snapshot();
+          await this.flush();
+          await this.enqueueRound(snap);
+          return;
+        }
+      }
+
       const llmStart = performance.now();
       const response = await this.llmProvider.callLLM(this.context, tools);
       const llmDurationMs = Math.round(performance.now() - llmStart);
+      // The provider failed us — don't charge the user a step for it.
+      if (this.stepBudget && (response.status === "error" || response.status === "exception")) {
+        await this.stepBudget.refund().catch((e) => this.log("budget_error", { iteration: start, message: String(e) }));
+      }
       if (this.closed) break; // closed while the LLM was thinking — don't run tools on a dead sandbox
 
       this.log("llm_call", { iteration: start, status: response.status, durationMs: llmDurationMs, usage: response.usage })

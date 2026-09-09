@@ -7,6 +7,7 @@ import { AgentSession } from "./agent/agent";
 import { closeLive, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
+import { stepBudget } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth } from "./auth";
 
@@ -187,6 +188,7 @@ export const app = new Elysia()
           persist: messagePersister(projectId),
           enqueueSnapshot: snapshotEnqueuer(projectId, userId, rewindGen),
           restoreSnapshot: snapshotLoader(projectId),
+          stepBudget: stepBudget(userId),
           initialContext,
         });
         return {

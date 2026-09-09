@@ -461,7 +461,7 @@ function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer:
     <Button variant="outline" size="sm" className="mt-2.5 rounded-lg" onClick={onContinue}>Continue</Button>
   )
 
-  if (kind === 'limit') {
+  if (kind === 'limit' || kind === 'budget') {
     return (
       <Timed ts={event.ts}>
         <div className="rounded-xl border border-dashed px-3.5 py-2.5">
@@ -469,7 +469,7 @@ function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer:
             <CircleAlert className="mt-1 size-3.5 shrink-0 text-primary" />
             <span>{String(event.content ?? '')}</span>
           </p>
-          {continueButton}
+          {kind === 'limit' && continueButton}
         </div>
       </Timed>
     )
