@@ -4,6 +4,22 @@ import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 
 const TEMPLATE = "orin-react-workspace-dev";
+
+// Anchors the agent to the actual workspace: it must EDIT the live Vite React app
+// (what the preview serves), not freelance a standalone file. Without this the
+// model tends to write e.g. a self-contained todo.html that never shows up in the
+// preview (which serves index.html → src/main.tsx → src/App.tsx via `bun run dev`).
+const SYSTEM_PROMPT = `You are Orin, an expert web app builder.
+
+You work inside a Bun + Vite + React + TypeScript app at /home/user/react-template. It uses Bun as the package manager and its dependencies are already installed — use \`bun add <pkg>\` / \`bunx\`, never npm/yarn/pnpm. Orin runs this app and shows it to the user in a live preview that hot-reloads as you edit — you do NOT need to start, run, or verify a dev server yourself; just edit the app's files and the preview updates.
+
+Your job: build what the user asks by modifying this app. The whole project is yours — edit or create any files (components and modules under src/, styles, index.html, config) and install dependencies with \`bun add <pkg>\` whenever you need them. The app's entry chain is index.html → src/main.tsx → src/App.tsx.
+
+Rules:
+- Build into THIS running app, not a separate one. Do NOT create standalone/disconnected .html files — a change only shows in the preview if it's part of this Vite React app (reachable from index.html / src/main.tsx).
+- Use bash_tool to inspect and write files (cat to read; write with a heredoc, e.g. cat > src/App.tsx <<'EOF' ... EOF) and to run \`bun add\` for new deps. Re-read a file to confirm your edit landed.
+- Keep the app compiling and runnable; write real, complete React + TypeScript.
+- If the request is ambiguous (scope, style, tech choice), use ask_user to ask instead of assuming.`;
 // agent is never cut off mid-build. This is only a safety ceiling — `close()` in
 // the `finally` kills the sandbox as soon as a run finishes normally.
 const SANDBOX_TIMEOUT_MS = 60 * 60_000;
@@ -28,6 +44,8 @@ export class AgentSession {
   // Set on close() so an in-flight loop stops instead of hammering the LLM against
   // a dead sandbox after the client disconnects.
   private closed = false;
+  // ask_user calls parked mid-turn, keyed by the tool_call id; resolved by answer().
+  private pendingQuestions = new Map<string, (answer: string) => void>();
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -38,7 +56,7 @@ export class AgentSession {
   ) {
     this.sessionId = crypto.randomUUID();
     this.context = [
-      { role: "system", content: "You are a helpful assistant, also you are provided with tools you can provide with commands that can be execute" },
+      { role: "system", content: SYSTEM_PROMPT },
     ];
   }
 
@@ -56,6 +74,10 @@ export class AgentSession {
   // Sandboxes are live VMs on E2B's infra — kill it when the session is done.
   async close() {
     this.closed = true; // stop any in-flight loop before/while we tear down
+    // Flush parked ask_user promises so a loop awaiting an answer unwinds instead
+    // of hanging forever; the `closed` check then ends the loop at its next step.
+    for (const resolve of this.pendingQuestions.values()) resolve("");
+    this.pendingQuestions.clear();
     await this.sandbox.kill();
     this.log("sandbox_closed", { sandboxId: this.sandbox.sandboxId });
   }
@@ -114,6 +136,26 @@ export class AgentSession {
     }
   }
 
+  // Called by the ask_user tool: emit the question as an event, then park a promise
+  // keyed by the tool_call id. The loop's `await` on the tool holds here until the
+  // user answers (or close() flushes pending questions on disconnect).
+  private askUser(callId: string, question: string, options: string[]): Promise<string> {
+    this.log("ask_user", { callId, question, options });
+    return new Promise<string>((resolve) => {
+      this.pendingQuestions.set(callId, resolve);
+    });
+  }
+
+  // Called by the transport when the user's answer arrives. Resolves the parked
+  // promise → the answer becomes the tool result → the loop resumes.
+  answer(callId: string, text: string): boolean {
+    const resolve = this.pendingQuestions.get(callId);
+    if (!resolve) return false;
+    this.pendingQuestions.delete(callId);
+    resolve(text);
+    return true;
+  }
+
   private log(event: string, data: Record<string, unknown> = {}) {
     const entry: AgentEvent = { ts: new Date().toISOString(), sessionId: this.sessionId, event, ...data };
     console.log(JSON.stringify(entry));
@@ -151,7 +193,10 @@ export class AgentSession {
         })
 
         const toolStart = performance.now();
-        const toolResponse = await toolExecution(response.content.toolCalls, this.sandbox)
+        const toolResponse = await toolExecution(response.content.toolCalls, {
+          sandbox: this.sandbox,
+          askUser: (callId, question, options) => this.askUser(callId, question, options),
+        })
         const toolDurationMs = Math.round(performance.now() - toolStart);
 
         this.context.push({
