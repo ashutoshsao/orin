@@ -1,4 +1,5 @@
-import { pgTable, text, integer, timestamp, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, integer, timestamp, jsonb, uniqueIndex, check } from "drizzle-orm/pg-core";
 import { user } from "./auth-schema";
 
 // `user` is owned by Better Auth (auth-schema.ts, CLI-generated). Our tables FK to it.
@@ -14,6 +15,27 @@ export const allowlist = pgTable("allowlist", {
   invitedBy: text("invited_by").references(() => user.id),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
+
+// What a user may spend (7a). One row per user; the tier comes from the allowlist, never
+// from the sign-in method. `stepsLimit` null = unlimited; a step is one successful LLM call.
+// `expiresAt` null = never — access expires automatically, data is only deleted by prune (7d).
+export const ACCESS_TIERS = ["allowlist", "guest", "byok"] as const;
+export type AccessTier = (typeof ACCESS_TIERS)[number];
+
+export const accountAccess = pgTable(
+  "account_access",
+  {
+    userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+    tier: text("tier", { enum: ACCESS_TIERS }).notNull(),
+    stepsLimit: integer("steps_limit"),
+    stepsUsed: integer("steps_used").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  // The reserve UPDATE's `steps_used < steps_limit` guard already stops overspend; this makes
+  // any other writer that would push past the limit fail loudly instead.
+  (t) => [check("account_access_steps_within_limit", sql`${t.stepsLimit} IS NULL OR ${t.stepsUsed} <= ${t.stepsLimit}`)],
+);
 
 // One app being built, owned by a user.
 export const project = pgTable("project", {

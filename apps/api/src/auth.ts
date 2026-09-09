@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { eq } from "drizzle-orm";
-import { db, allowlist } from "@repo/db";
+import { db, allowlist, accountAccess } from "@repo/db";
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
@@ -24,6 +24,11 @@ export const auth = betterAuth({
               message: "This email isn't on the invite list yet.",
             });
           }
+        },
+        // Every account gets an access row (7a). Sign-up is allowlist-gated today, so the tier
+        // is `allowlist` (unlimited, never expires); GitHub/guest paths set their own in 7b/7c.
+        after: async (user) => {
+          await db.insert(accountAccess).values({ userId: user.id, tier: "allowlist" }).onConflictDoNothing();
         },
       },
     },
