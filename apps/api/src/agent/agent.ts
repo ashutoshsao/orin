@@ -1,5 +1,5 @@
 import { Sandbox } from "e2b";
-import { ContextType, LLMProvider } from "./types";
+import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 
@@ -34,6 +34,16 @@ export type AgentEvent = {
   [key: string]: unknown;
 };
 
+// How a session receives events and persists messages, plus an optional context to
+// resume from. Passed to `create` — keeps the loop unaware of HTTP and the DB.
+export type CreateOptions = {
+  onEvent?: (event: AgentEvent) => void;
+  // Persist a batch of newly-appended messages; `startSeq` is their index in context.
+  persist?: (messages: MessageType[], startSeq: number) => Promise<void>;
+  // Seed context from a prior project (resume); replaces the default [system].
+  initialContext?: ContextType;
+};
+
 export class AgentSession {
   private context: ContextType;
   private sessionId: string;
@@ -46,6 +56,8 @@ export class AgentSession {
   private closed = false;
   // ask_user calls parked mid-turn, keyed by the tool_call id; resolved by answer().
   private pendingQuestions = new Map<string, (answer: string) => void>();
+  // How many context messages are already persisted, so flush() only writes the tail.
+  private persistedCount = 0;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -53,6 +65,7 @@ export class AgentSession {
     private llmProvider: LLMProvider,
     private sandbox: Sandbox,
     private onEvent?: (event: AgentEvent) => void,
+    private persist?: (messages: MessageType[], startSeq: number) => Promise<void>,
   ) {
     this.sessionId = crypto.randomUUID();
     this.context = [
@@ -62,13 +75,34 @@ export class AgentSession {
 
   // Async construction: `await Sandbox.create(...)` can't live in a constructor,
   // so it lives here and the session isn't returned until the sandbox is live.
-  // `onEvent` (optional) is how transports (e.g. SSE) receive events; without it
-  // the session just logs to stdout, as the CLI harness does.
-  static async create(llmProvider: LLMProvider, onEvent?: (event: AgentEvent) => void) {
+  // `onEvent`/`persist` are how transports/DB tap in; `initialContext` resumes a project.
+  static async create(llmProvider: LLMProvider, opts: CreateOptions = {}) {
     const sandbox = await Sandbox.create(TEMPLATE, { timeoutMs: SANDBOX_TIMEOUT_MS });
-    const session = new AgentSession(llmProvider, sandbox, onEvent);
+    const session = new AgentSession(llmProvider, sandbox, opts.onEvent, opts.persist);
+    if (opts.initialContext && opts.initialContext.length > 0) {
+      // Resume: loaded messages (incl. the original system prompt) are already
+      // persisted, so start the tail after them.
+      session.context = [...opts.initialContext];
+      session.persistedCount = session.context.length;
+    }
+    // Fresh session leaves persistedCount at 0, so the system prompt persists too.
     session.log("sandbox_created", { sandboxId: sandbox.sandboxId, template: TEMPLATE });
     return session;
+  }
+
+  // Persist the not-yet-saved tail of context. Called at each round boundary (never
+  // mid-round), so a saved state is always a valid, resumable one. Best-effort: a
+  // persist failure is logged, not thrown, and retried on the next flush.
+  private async flush() {
+    if (!this.persist) return;
+    const tail = this.context.slice(this.persistedCount);
+    if (tail.length === 0) return;
+    try {
+      await this.persist(tail, this.persistedCount);
+      this.persistedCount = this.context.length;
+    } catch (e) {
+      this.log("persist_error", { message: String(e) });
+    }
   }
 
   // Sandboxes are live VMs on E2B's infra — kill it when the session is done.
@@ -184,6 +218,7 @@ export class AgentSession {
 
         this.context.push({ role: "assistant", content: response.content });
         this.log("final", { iteration: start, content: response.content });
+        await this.flush();
         break;
 
       } else if (response.status === "toolCall") {
@@ -208,6 +243,10 @@ export class AgentSession {
           durationMs: toolDurationMs,
           tools: response.content.toolCalls.map((t, i) => ({ name: t.name, ok: toolResponse[i].ok }))
         })
+
+        // Round complete (assistant tool_calls + tool results both appended) —
+        // persist them together, keeping the saved log always valid.
+        await this.flush();
 
       } else if (response.status === "error") {
         this.log("error", { iteration: start, content: response.content });
