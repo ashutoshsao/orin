@@ -12,7 +12,7 @@ import { user } from "./auth-schema";
 // Invite gate: only emails present here may create an account.
 export const allowlist = pgTable("allowlist", {
   email: text("email").primaryKey(),
-  invitedBy: text("invited_by").references(() => user.id),
+  invitedBy: text("invited_by").references(() => user.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -40,7 +40,9 @@ export const accountAccess = pgTable(
 // One app being built, owned by a user.
 export const project = pgTable("project", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  userId: text("user_id").notNull().references(() => user.id),
+  // Cascades (7d): deleting a user removes their projects → messages + snapshots, so prune is
+  // one DELETE (R2 objects are removed by the prune script first — the DB can't reach them).
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   latestSnapshotKey: text("latest_snapshot_key"), // R2 key for codebase restore (M5b)
   // How many context messages the latest pushed snapshot covers — the "durable up to N"
@@ -62,7 +64,7 @@ export const project = pgTable("project", {
 // to the highest-n row's commit. `key` is kept as a record, not relied on.
 export const snapshot = pgTable("snapshot", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  projectId: text("project_id").notNull().references(() => project.id),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
   commitHash: text("commit_hash").notNull(),
   n: integer("n").notNull(),
   key: text("key").notNull(),
@@ -75,7 +77,7 @@ export const message = pgTable(
   "message",
   {
     id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-    projectId: text("project_id").notNull().references(() => project.id),
+    projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(), // ordering within a project
     role: text("role").notNull(), // system | user | assistant | tool
     content: jsonb("content").notNull(), // preserves tool_calls / tool results structure

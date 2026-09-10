@@ -57,6 +57,13 @@
       "when": 1789598799532,
       "tag": "0007_cultured_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789599649416,
+      "tag": "0008_blushing_lord_hawal",
+      "breakpoints": true
     }
   ]
 }
