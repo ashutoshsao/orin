@@ -40,16 +40,17 @@ export async function refundStep(userId: string): Promise<void> {
 // Whether a signed-in user may use the API at all (7a) — checked on every request. Access
 // expiry is automatic; data is untouched (deleted only by prune, 7d). No row = no access
 // (fail closed; every account gets one at sign-up).
-export type AccessCheck = { ok: true } | { ok: false; reason: "expired" | "no_access" };
+// `limited` = the account has a step limit (guest / byok): one live session at a time.
+export type AccessCheck = { ok: true; limited: boolean } | { ok: false; reason: "expired" | "no_access" };
 
 export async function checkAccess(userId: string): Promise<AccessCheck> {
   const [row] = await db
-    .select({ expiresAt: accountAccess.expiresAt })
+    .select({ expiresAt: accountAccess.expiresAt, stepsLimit: accountAccess.stepsLimit })
     .from(accountAccess)
     .where(eq(accountAccess.userId, userId));
   if (!row) return { ok: false, reason: "no_access" };
   if (row.expiresAt && row.expiresAt.getTime() <= Date.now()) return { ok: false, reason: "expired" };
-  return { ok: true };
+  return { ok: true, limited: row.stepsLimit !== null };
 }
 
 // Seam handed to AgentSession: the loop only sees reserve/refund, never the DB.

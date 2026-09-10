@@ -4,7 +4,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { db, message, project, snapshot } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession } from "./agent/agent";
-import { closeLive, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
+import { closeLive, closeOtherLives, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, stepBudget } from "./persistence/access";
@@ -17,7 +17,7 @@ const WEB_ORIGIN = "http://localhost:5173";
 // Resolve the signed-in user from the request's cookies (Better Auth session) and check
 // their access hasn't expired (7a) — on every request, not only at sign-in, so an expired
 // guest's open tab stops working. 401 = not signed in; 403 = signed in, access over.
-type Authorized = { ok: true; userId: string } | { ok: false; status: 401 | 403; error: "unauthorized" | "access_expired" | "no_access" };
+type Authorized = { ok: true; userId: string; limited: boolean } | { ok: false; status: 401 | 403; error: "unauthorized" | "access_expired" | "no_access" };
 
 async function authorize(request: Request): Promise<Authorized> {
   const session = await auth.api.getSession({ headers: request.headers });
@@ -25,7 +25,7 @@ async function authorize(request: Request): Promise<Authorized> {
   if (!userId) return { ok: false, status: 401, error: "unauthorized" };
   const access = await checkAccess(userId);
   if (!access.ok) return { ok: false, status: 403, error: access.reason === "expired" ? "access_expired" : "no_access" };
-  return { ok: true, userId };
+  return { ok: true, userId, limited: access.limited };
 }
 
 async function ownsProject(userId: string, projectId: string): Promise<boolean> {
@@ -163,7 +163,7 @@ export const app = new Elysia()
 
       // Sessions now outlive their stream, so a live one would still hold the pre-rewind
       // code and history — close it first; the page's reopen then starts a fresh one.
-      await closeLive(params.id);
+      await closeLive(params.id, "rewind");
       await rewindProject(params.id, snap.n);
       return { ok: true, n: snap.n };
     },
@@ -192,7 +192,10 @@ export const app = new Elysia()
       // Attach to the project's live session, or start one. The session is owned by the
       // server (liveSessions.ts); this stream is only a subscriber to it.
       const projectId = query.projectId;
-      const live = getLive(projectId) ?? startLive(projectId, async (onEvent) => {
+      // A limited account keeps one live session: opening this project closes the others.
+      // No await between this and startLive, so racing tabs can't both keep one.
+      if (who.limited) closeOtherLives(userId, projectId);
+      const live = getLive(projectId) ?? startLive(projectId, userId, async (onEvent) => {
         // Resume: load any prior conversation to seed the session (empty for a new project).
         const initialContext = await loadContext(projectId);
         const [{ rewindGen }] = await db.select({ rewindGen: project.rewindGen }).from(project).where(eq(project.id, projectId));
@@ -220,7 +223,7 @@ export const app = new Elysia()
       });
 
       const queue = createEventQueue<StreamEvent>();
-      const sub = { push: (e: StreamEvent) => queue.push(e) };
+      const sub = { push: (e: StreamEvent) => queue.push(e), end: () => queue.finish() };
       const after = query.after !== undefined ? Number(query.after) : undefined;
       const { replay, resumed } = subscribe(live, sub, Number.isFinite(after) ? after : undefined);
 

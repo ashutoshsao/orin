@@ -15,13 +15,15 @@ import type { AgentEvent, AgentSession } from "./agent/agent";
 // How long a session outlives its last viewer. Overridable so tests needn't wait a minute.
 const GRACE_MS = Number(process.env.ORIN_GRACE_MS ?? 60_000);
 const BUFFER_MAX = 2_000;
-const RUN_ENDS = new Set(["final", "error", "exception", "max_iterations_reached"]);
+const RUN_ENDS = new Set(["final", "error", "exception", "max_iterations_reached", "budget_exhausted", "budget_error"]);
 
 export type StreamEvent = AgentEvent & { id?: number };
-type Subscriber = { push: (e: StreamEvent) => void };
+// `end` finishes that stream — used when the session is closed out from under its viewers.
+type Subscriber = { push: (e: StreamEvent) => void; end: () => void };
 
 type Live = {
   projectId: string;
+  userId: string; // owner — lets a limited account's other sessions be found and closed
   session: AgentSession | null; // null while the sandbox boots
   subscribers: Set<Subscriber>;
   buffer: StreamEvent[];
@@ -64,10 +66,11 @@ function broadcast(live: Live, e: AgentEvent) {
 // (start the preview, run the first prompt) that continues in the background.
 export function startLive(
   projectId: string,
+  userId: string,
   boot: (onEvent: (e: AgentEvent) => void) => Promise<{ session: AgentSession; afterReady: () => Promise<void> }>,
 ): Live {
   const live: Live = {
-    projectId, session: null, subscribers: new Set(), buffer: [], nextId: 1,
+    projectId, userId, session: null, subscribers: new Set(), buffer: [], nextId: 1,
     grace: null, closed: false, runActive: false,
   };
   lives.set(projectId, live);
@@ -114,16 +117,38 @@ export function unsubscribe(live: Live, sub: Subscriber) {
   }
 }
 
-// Close a project's live session now (grace expired, or a rewind needs a fresh one).
-export async function closeLive(projectId: string) {
+// Why a session was closed while pages may still be watching. Sent to them as a
+// `session_closed` event so they stop and say why, instead of silently reconnecting.
+export type CloseReason = "grace" | "rewind" | "other_project";
+
+// Close a project's live session now (grace expired, a rewind needs a fresh one, or a
+// limited account opened another project). Marks closed synchronously — before any await —
+// so a caller that closes and then starts another session in the same tick can't race.
+export async function closeLive(projectId: string, reason: CloseReason = "grace") {
   const live = lives.get(projectId);
   if (!live || live.closed) return;
   live.closed = true;
   if (live.grace) clearTimeout(live.grace);
   lives.delete(projectId);
+  broadcast(live, { ts: new Date().toISOString(), sessionId: live.session?.id ?? "", event: "session_closed", reason });
+  for (const sub of live.subscribers) sub.end();
   if (live.session) {
     byId.delete(live.session.id);
     // close() flushes any parked ask_user promise, so a turn blocked on an answer unwinds.
     await live.session.close().catch(() => {});
   }
+}
+
+// One live session per limited account (7a): starting or attaching to `keepProjectId`
+// closes that user's sessions on every other project — sandboxes are the cost, and a
+// guest can't hold several. Synchronous marking (see closeLive) means two tabs opening
+// different projects at once end with exactly one live session.
+export function closeOtherLives(userId: string, keepProjectId: string): number {
+  let closed = 0;
+  for (const live of [...lives.values()]) {
+    if (live.userId !== userId || live.projectId === keepProjectId) continue;
+    void closeLive(live.projectId, "other_project");
+    closed++;
+  }
+  return closed;
 }

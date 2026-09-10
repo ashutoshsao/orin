@@ -32,6 +32,9 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
   const [frameKey, setFrameKey] = useState(0)
   // The stream dying used to be invisible — the UI just sat there looking busy.
   const [connection, setConnection] = useState<'open' | 'reconnecting' | 'closed'>('open')
+  // Set when the server closed the session on purpose (another project opened, a rewind in
+  // another tab) — then we stop instead of auto-reconnecting, and say why.
+  const [closedReason, setClosedReason] = useState<string | null>(null)
   const esRef = useRef<EventSource | null>(null)
   const feedEndRef = useRef<HTMLDivElement | null>(null)
   // Consecutive failed connection attempts, for reconnect backoff.
@@ -83,7 +86,7 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
     if (resumingRef.current && lastIdRef.current) params.set('after', lastIdRef.current)
     const es = new EventSource(`${API}/agent/stream?${params}`, { withCredentials: true }) // carries the auth cookie
     esRef.current = es
-    es.onopen = () => { retriesRef.current = 0; setConnection('open') }
+    es.onopen = () => { retriesRef.current = 0; setConnection('open'); setClosedReason(null) }
     // Never let EventSource reconnect by itself: its retry reuses this URL (first prompt
     // included) and knows nothing of resume. Close it and reconnect ourselves with the last
     // event id, backing off; after a few failures, stop and offer the Reconnect button.
@@ -100,6 +103,14 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
       if (msg.lastEventId) lastIdRef.current = msg.lastEventId
       const e: AgentEvent = JSON.parse(msg.data)
       if (e.event === 'ping') return
+      if (e.event === 'session_closed') {
+        // Don't reconnect on our own: for a limited account that would reopen this project
+        // and close the other tab's — two tabs closing each other forever. Wait for a click.
+        es.close()
+        setConnection('closed')
+        setClosedReason(typeof e.reason === 'string' ? e.reason : 'closed')
+        return
+      }
       if (e.event === 'attached') {
         // A reconnect that didn't rejoin (the grace period ran out): what's on screen
         // belongs to a session that no longer exists — reset and reload from the database.
@@ -278,10 +289,18 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
           <div className="flex items-center justify-between gap-2 border-t bg-muted/40 px-6 py-2 text-xs">
             <span className="flex items-center gap-1.5 text-muted-foreground">
               <PlugZap className="size-3.5" />
-              {connection === 'reconnecting' ? 'Reconnecting…' : 'Disconnected'}
+              {connection === 'reconnecting'
+                ? 'Reconnecting…'
+                : closedReason === 'other_project'
+                  ? 'Paused — you opened another project'
+                  : closedReason === 'rewind'
+                    ? 'Rewound elsewhere — reopen to continue'
+                    : 'Disconnected'}
             </span>
             {connection === 'closed' && (
-              <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; reconnect() }}>Reconnect</Button>
+              <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; if (closedReason) reopen(); else reconnect() }}>
+                {closedReason ? 'Reopen' : 'Reconnect'}
+              </Button>
             )}
           </div>
         )}

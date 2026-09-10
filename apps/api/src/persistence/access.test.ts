@@ -81,7 +81,7 @@ describe("refundStep", () => {
 describe("checkAccess", () => {
   test("no expiry → ok; past expiry → expired; no row → no_access", async () => {
     await setAccess({ stepsLimit: 60 });
-    expect(await checkAccess(USER_ID)).toEqual({ ok: true });
+    expect(await checkAccess(USER_ID)).toEqual({ ok: true, limited: true });
     await setAccess({ stepsLimit: 60, expiresAt: new Date(Date.now() - 1000) });
     expect(await checkAccess(USER_ID)).toEqual({ ok: false, reason: "expired" });
     await db.delete(accountAccess).where(eq(accountAccess.userId, USER_ID));
@@ -90,6 +90,11 @@ describe("checkAccess", () => {
 
   test("out of steps is still access (read-only use continues)", async () => {
     await setAccess({ stepsLimit: 1, stepsUsed: 1 });
-    expect(await checkAccess(USER_ID)).toEqual({ ok: true });
+    expect(await checkAccess(USER_ID)).toEqual({ ok: true, limited: true });
+  });
+
+  test("unlimited account is not limited", async () => {
+    await setAccess({ tier: "allowlist", stepsLimit: null });
+    expect(await checkAccess(USER_ID)).toEqual({ ok: true, limited: false });
   });
 });
