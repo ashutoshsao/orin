@@ -5,14 +5,17 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Kbd, Wordmark } from '@/components/brand'
+import { stepsLeftLabel, type Access } from '@/lib/access'
 
 // Home is the "describe an app" moment, not a dashboard: the composer is centered and
 // given the viewport, with saved projects kept quietly below it (and absent entirely
 // until there are some, so a first-time user sees only the one thing to do).
-export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: string) => void }) {
+export function ProjectsScreen({ access, onOpen }: { access: Access; onOpen: (p: Project, firstPrompt?: string) => void }) {
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [prompt, setPrompt] = useState('')
   const [creating, setCreating] = useState(false)
+  const outOfSteps = access.stepsLeft === 0
+  const stepsLabel = stepsLeftLabel(access)
 
   useEffect(() => {
     let alive = true
@@ -25,7 +28,7 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
 
   async function create() {
     const text = prompt.trim()
-    if (!text || creating) return
+    if (!text || creating || outOfSteps) return
     setCreating(true)
     const res = await postJSON('/projects', { name: text.slice(0, 60) })
     setCreating(false)
@@ -53,6 +56,11 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
         <p className="mt-5 text-balance text-base text-muted-foreground">
           Describe it in a sentence. You'll refine it as it comes together.
         </p>
+        {stepsLabel && (
+          <p className="mt-2 font-mono text-xs text-muted-foreground">
+            {outOfSteps ? 'Trial used up — your projects are still here to look at.' : `Trial · ${stepsLabel}`}
+          </p>
+        )}
 
         <form
           onSubmit={(e) => { e.preventDefault(); create() }}
@@ -64,12 +72,13 @@ export function ProjectsScreen({ onOpen }: { onOpen: (p: Project, firstPrompt?: 
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
             rows={3}
             autoFocus
-            placeholder="A habit tracker with streaks and a calm weekly view…"
-            className="w-full resize-none bg-transparent px-6 pt-5 pb-2 text-[17px] leading-relaxed outline-none placeholder:text-muted-foreground/80"
+            disabled={outOfSteps}
+            placeholder={outOfSteps ? 'No steps left in this trial' : 'A habit tracker with streaks and a calm weekly view…'}
+            className="w-full resize-none bg-transparent px-6 pt-5 pb-2 text-[17px] leading-relaxed outline-none placeholder:text-muted-foreground/80 disabled:cursor-not-allowed"
           />
           <div className="flex items-center justify-end gap-2.5 px-3.5 pb-3.5">
             <span className="flex items-center gap-1"><Kbd>⌘</Kbd><Kbd>↵</Kbd></span>
-            <Button type="submit" className="rounded-lg px-3.5 font-semibold" disabled={!prompt.trim() || creating}>
+            <Button type="submit" className="rounded-lg px-3.5 font-semibold" disabled={!prompt.trim() || creating || outOfSteps}>
               {creating ? 'Starting…' : 'Build'}
             </Button>
           </div>

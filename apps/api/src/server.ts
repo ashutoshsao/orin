@@ -7,7 +7,7 @@ import { AgentSession } from "./agent/agent";
 import { closeLive, closeOtherLives, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
-import { checkAccess, stepBudget } from "./persistence/access";
+import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth } from "./auth";
 
@@ -75,6 +75,13 @@ export const app = new Elysia()
   .use(cors({ origin: WEB_ORIGIN, credentials: true }))
   // Better Auth routes (sign-up/in/out, session) mount at /api/auth/*
   .mount(auth.handler)
+  // The signed-in user's access (tier, steps left, expiry). Deliberately NOT behind the
+  // expiry check — an expired account still needs to learn that it expired.
+  .get("/me", async ({ request, set }) => {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (!session?.user?.id) { set.status = 401; return { error: "unauthorized" }; }
+    return { email: session.user.email, access: await getAccessView(session.user.id) };
+  })
   // Create a project (owned by the signed-in user).
   .post(
     "/projects",

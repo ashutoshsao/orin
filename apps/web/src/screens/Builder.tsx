@@ -10,12 +10,22 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { cn } from '@/lib/utils'
+import { stepsLeftLabel, type Access } from '@/lib/access'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 
-export function Builder({ project, firstPrompt, onBack }: { project: Project; firstPrompt?: string; onBack: () => void }) {
+export function Builder({ project, firstPrompt, access, onAccessChange, onBack }: {
+  project: Project
+  firstPrompt?: string
+  access: Access
+  // Re-read access (steps left / expiry) after something that may have changed it.
+  onAccessChange: () => void
+  onBack: () => void
+}) {
+  const outOfSteps = access.stepsLeft === 0
+  const stepsLabel = stepsLeftLabel(access)
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -103,6 +113,8 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
       if (msg.lastEventId) lastIdRef.current = msg.lastEventId
       const e: AgentEvent = JSON.parse(msg.data)
       if (e.event === 'ping') return
+      // Spent a step, ran out, or lost access: re-read it (the last two flip the screen/composer).
+      if (e.event === 'llm_call' || e.event === 'budget_exhausted' || e.event === 'access_expired' || e.event === 'no_access') onAccessChange()
       if (e.event === 'session_closed') {
         // Don't reconnect on our own: for a limited account that would reopen this project
         // and close the other tab's — two tabs closing each other forever. Wait for a click.
@@ -149,7 +161,7 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
 
   // One path for every follow-up — the composer and the step-limit "Continue" button alike.
   function send(text: string) {
-    if (!sessionId || !text.trim()) return
+    if (!sessionId || !text.trim() || outOfSteps) return
     setEvents((prev) => [...prev, { event: 'run_start', userPrompt: text, ts: new Date().toISOString(), local: true }])
     postJSON(`/agent/${sessionId}/message`, { prompt: text })
   }
@@ -336,15 +348,20 @@ export function Builder({ project, firstPrompt, onBack }: { project: Project; fi
               <input
                 value={followUp}
                 onChange={(e) => setFollowUp(e.target.value)}
-                placeholder={sessionId ? 'Ask for a change…' : 'Connecting…'}
-                disabled={!sessionId}
+                placeholder={outOfSteps ? 'No steps left in this trial' : sessionId ? 'Ask for a change…' : 'Connecting…'}
+                disabled={!sessionId || outOfSteps}
                 className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
               />
               <Kbd>↵</Kbd>
-              <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!followUp.trim() || !sessionId}>
+              <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!followUp.trim() || !sessionId || outOfSteps}>
                 Send
               </Button>
             </form>
+          )}
+          {stepsLabel && (
+            <p className="mt-2 px-1 font-mono text-[11px] text-muted-foreground">
+              {outOfSteps ? 'Trial used up · your work is saved' : `Trial · ${stepsLabel}`}
+            </p>
           )}
         </div>
       </aside>

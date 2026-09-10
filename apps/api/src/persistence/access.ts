@@ -53,6 +53,31 @@ export async function checkAccess(userId: string): Promise<AccessCheck> {
   return { ok: true, limited: row.stepsLimit !== null };
 }
 
+// What the UI shows about an account's access (GET /me): tier, steps left, expiry. Read
+// even when expired — that's how the page knows to show "access ended" instead of an
+// empty home. null = no access row.
+export type AccessView = {
+  tier: string;
+  stepsLimit: number | null;
+  stepsUsed: number;
+  stepsLeft: number | null; // null = unlimited
+  expiresAt: string | null;
+  expired: boolean;
+};
+
+export async function getAccessView(userId: string): Promise<AccessView | null> {
+  const [row] = await db.select().from(accountAccess).where(eq(accountAccess.userId, userId));
+  if (!row) return null;
+  return {
+    tier: row.tier,
+    stepsLimit: row.stepsLimit,
+    stepsUsed: row.stepsUsed,
+    stepsLeft: row.stepsLimit === null ? null : Math.max(0, row.stepsLimit - row.stepsUsed),
+    expiresAt: row.expiresAt?.toISOString() ?? null,
+    expired: !!row.expiresAt && row.expiresAt.getTime() <= Date.now(),
+  };
+}
+
 // Seam handed to AgentSession: the loop only sees reserve/refund, never the DB.
 export function stepBudget(userId: string) {
   return { reserve: () => reserveStep(userId), refund: () => refundStep(userId) };

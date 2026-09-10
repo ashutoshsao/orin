@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
 import { accountAccess, db, user } from "@repo/db";
-import { checkAccess, refundStep, reserveStep } from "./access";
+import { checkAccess, getAccessView, refundStep, reserveStep } from "./access";
 
 // Runs against the local Postgres (`docker compose up -d`) with a throwaway user — the
 // guarantees under test (atomic reserve, CHECK constraint) live in SQL, so a fake DB
@@ -96,5 +96,14 @@ describe("checkAccess", () => {
   test("unlimited account is not limited", async () => {
     await setAccess({ tier: "allowlist", stepsLimit: null });
     expect(await checkAccess(USER_ID)).toEqual({ ok: true, limited: false });
+  });
+});
+
+describe("getAccessView", () => {
+  test("limited: steps left floors at 0; expired flag; unlimited → stepsLeft null", async () => {
+    await setAccess({ stepsLimit: 60, stepsUsed: 58, expiresAt: new Date(Date.now() - 1000) });
+    expect(await getAccessView(USER_ID)).toMatchObject({ tier: "guest", stepsLeft: 2, expired: true });
+    await setAccess({ tier: "allowlist", stepsLimit: null, stepsUsed: 5 });
+    expect(await getAccessView(USER_ID)).toMatchObject({ stepsLeft: null, expiresAt: null, expired: false });
   });
 });
