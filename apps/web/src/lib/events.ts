@@ -31,6 +31,8 @@ export function eventKind(e: AgentEvent): EventKind {
     case 'exception':
     case 'stream_error':
     case 'unauthorized':
+    case 'access_expired':
+    case 'no_access':
     case 'project_not_found':
     case 'snapshot_error':
     case 'budget_error':
@@ -59,6 +61,8 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
 export function errorText(e: AgentEvent): string {
   switch (e.event) {
     case 'unauthorized': return 'You are not signed in.'
+    case 'access_expired': return 'Your access to Orin has expired. Your projects are still saved.'
+    case 'no_access': return 'This account has no access to Orin.'
     case 'project_not_found': return 'That project could not be found.'
     default: return String(e.message ?? e.content ?? 'Something went wrong.')
   }

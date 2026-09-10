@@ -37,9 +37,10 @@ type Live = {
 };
 
 const lives = new Map<string, Live>(); // by projectId
-const byId = new Map<string, AgentSession>(); // by sessionId, for follow-up/answer POSTs
+const byId = new Map<string, { session: AgentSession; projectId: string }>(); // by sessionId, for follow-up/answer POSTs
 
 export const getLive = (projectId: string) => lives.get(projectId);
+// The session plus the project it belongs to — callers must check the project's owner.
 export const getSession = (sessionId: string) => byId.get(sessionId);
 
 function broadcast(live: Live, e: AgentEvent) {
@@ -75,7 +76,7 @@ export function startLive(
       const { session, afterReady } = await boot((e) => broadcast(live, e));
       if (live.closed) { await session.close().catch(() => {}); return; } // closed while booting
       live.session = session;
-      byId.set(session.id, session);
+      byId.set(session.id, { session, projectId });
       await afterReady();
     } catch (e) {
       broadcast(live, { ts: new Date().toISOString(), sessionId: "", event: "stream_error", message: String(e) });

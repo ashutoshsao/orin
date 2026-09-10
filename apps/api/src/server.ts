@@ -7,17 +7,34 @@ import { AgentSession } from "./agent/agent";
 import { closeLive, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
-import { stepBudget } from "./persistence/access";
+import { checkAccess, stepBudget } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth } from "./auth";
 
 const PORT = 4000;
 const WEB_ORIGIN = "http://localhost:5173";
 
-// Resolve the signed-in user from the request's cookies (Better Auth session).
-async function getUserId(request: Request): Promise<string | null> {
+// Resolve the signed-in user from the request's cookies (Better Auth session) and check
+// their access hasn't expired (7a) — on every request, not only at sign-in, so an expired
+// guest's open tab stops working. 401 = not signed in; 403 = signed in, access over.
+type Authorized = { ok: true; userId: string } | { ok: false; status: 401 | 403; error: "unauthorized" | "access_expired" | "no_access" };
+
+async function authorize(request: Request): Promise<Authorized> {
   const session = await auth.api.getSession({ headers: request.headers });
-  return session?.user?.id ?? null;
+  const userId = session?.user?.id;
+  if (!userId) return { ok: false, status: 401, error: "unauthorized" };
+  const access = await checkAccess(userId);
+  if (!access.ok) return { ok: false, status: 403, error: access.reason === "expired" ? "access_expired" : "no_access" };
+  return { ok: true, userId };
+}
+
+async function ownsProject(userId: string, projectId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: project.id })
+    .from(project)
+    .where(and(eq(project.id, projectId), eq(project.userId, userId)))
+    .limit(1);
+  return !!row;
 }
 
 // Live sessions (one per project, outliving individual streams) live in liveSessions.ts.
@@ -62,11 +79,9 @@ export const app = new Elysia()
   .post(
     "/projects",
     async ({ request, body, set }) => {
-      const userId = await getUserId(request);
-      if (!userId) {
-        set.status = 401;
-        return { error: "unauthorized" };
-      }
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      const userId = who.userId;
       const [row] = await db.insert(project).values({ userId, name: body.name }).returning();
       return row;
     },
@@ -74,11 +89,9 @@ export const app = new Elysia()
   )
   // List the signed-in user's projects, newest first.
   .get("/projects", async ({ request, set }) => {
-    const userId = await getUserId(request);
-    if (!userId) {
-      set.status = 401;
-      return { error: "unauthorized" };
-    }
+    const who = await authorize(request);
+    if (!who.ok) { set.status = who.status; return { error: who.error }; }
+    const userId = who.userId;
     return db.select().from(project).where(eq(project.userId, userId)).orderBy(desc(project.updatedAt));
   })
   // Persisted conversation for a project, ordered — lets the UI replay the transcript on
@@ -86,11 +99,9 @@ export const app = new Elysia()
   .get(
     "/projects/:id/messages",
     async ({ params, request, set }) => {
-      const userId = await getUserId(request);
-      if (!userId) {
-        set.status = 401;
-        return { error: "unauthorized" };
-      }
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      const userId = who.userId;
       const [proj] = await db
         .select({ id: project.id })
         .from(project)
@@ -112,8 +123,9 @@ export const app = new Elysia()
   .get(
     "/projects/:id/snapshots",
     async ({ params, request, set }) => {
-      const userId = await getUserId(request);
-      if (!userId) { set.status = 401; return { error: "unauthorized" }; }
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      const userId = who.userId;
       const [proj] = await db
         .select({ id: project.id })
         .from(project)
@@ -133,8 +145,9 @@ export const app = new Elysia()
   .post(
     "/projects/:id/rewind",
     async ({ params, body, request, set }) => {
-      const userId = await getUserId(request);
-      if (!userId) { set.status = 401; return { error: "unauthorized" }; }
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      const userId = who.userId;
       const [proj] = await db
         .select({ id: project.id })
         .from(project)
@@ -161,11 +174,12 @@ export const app = new Elysia()
     async function* ({ query, request }) {
       // Auth + ownership before streaming (EventSource can't send headers, so this
       // rides on the session cookie). On failure, emit one event and end the stream.
-      const userId = await getUserId(request);
-      if (!userId) {
-        yield sse({ data: { event: "unauthorized" } });
+      const who = await authorize(request);
+      if (!who.ok) {
+        yield sse({ data: { event: who.error } });
         return;
       }
+      const userId = who.userId;
       const [proj] = await db
         .select()
         .from(project)
@@ -255,12 +269,17 @@ export const app = new Elysia()
   // already-open SSE stream — so nothing is returned here but an ack.
   .post(
     "/agent/:sessionId/message",
-    ({ params, body, set }) => {
-      const session = getSession(params.sessionId);
-      if (!session) {
+    async ({ params, body, request, set }) => {
+      // Signed in, not expired, and the session's project is theirs — a session id alone
+      // (it travels in every SSE event and log line) must not be enough to spend steps.
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      const entry = getSession(params.sessionId);
+      if (!entry || !(await ownsProject(who.userId, entry.projectId))) {
         set.status = 404;
         return { error: "session not found" };
       }
+      const { session } = entry;
       session.submit(body.prompt); // not awaited — events surface on the SSE stream
       return { ok: true };
     },
@@ -272,13 +291,15 @@ export const app = new Elysia()
   // resumes with the answer as the tool result → progress flows down the SSE stream.
   .post(
     "/agent/:sessionId/answer",
-    ({ params, body, set }) => {
-      const session = getSession(params.sessionId);
-      if (!session) {
+    async ({ params, body, request, set }) => {
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      const entry = getSession(params.sessionId);
+      if (!entry || !(await ownsProject(who.userId, entry.projectId))) {
         set.status = 404;
         return { error: "session not found" };
       }
-      const ok = session.answer(body.callId, body.answer);
+      const ok = entry.session.answer(body.callId, body.answer);
       if (!ok) {
         set.status = 409;
         return { error: "no pending question for that callId" };
