@@ -1,10 +1,20 @@
 import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { and, desc, eq } from "drizzle-orm";
+import { db, project } from "@repo/db";
 import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
 import { AgentSession, type AgentEvent } from "./agent/agent";
+import { loadContext, messagePersister } from "./persistence/store";
 import { auth } from "./auth";
 
 const PORT = 4000;
+const WEB_ORIGIN = "http://localhost:5173";
+
+// Resolve the signed-in user from the request's cookies (Better Auth session).
+async function getUserId(request: Request): Promise<string | null> {
+  const session = await auth.api.getSession({ headers: request.headers });
+  return session?.user?.id ?? null;
+}
 
 // Live sessions, keyed by id, so follow-up POSTs can find the right session.
 // A session is registered when its stream opens and removed on disconnect.
@@ -42,12 +52,55 @@ function createEventQueue<T>() {
 }
 
 export const app = new Elysia()
-  .use(cors())
+  // credentials + explicit origin so the browser sends/accepts auth cookies cross-origin
+  .use(cors({ origin: WEB_ORIGIN, credentials: true }))
   // Better Auth routes (sign-up/in/out, session) mount at /api/auth/*
   .mount(auth.handler)
+  // Create a project (owned by the signed-in user).
+  .post(
+    "/projects",
+    async ({ request, body, set }) => {
+      const userId = await getUserId(request);
+      if (!userId) {
+        set.status = 401;
+        return { error: "unauthorized" };
+      }
+      const [row] = await db.insert(project).values({ userId, name: body.name }).returning();
+      return row;
+    },
+    { body: t.Object({ name: t.String({ minLength: 1 }) }) },
+  )
+  // List the signed-in user's projects, newest first.
+  .get("/projects", async ({ request, set }) => {
+    const userId = await getUserId(request);
+    if (!userId) {
+      set.status = 401;
+      return { error: "unauthorized" };
+    }
+    return db.select().from(project).where(eq(project.userId, userId)).orderBy(desc(project.updatedAt));
+  })
   .get(
     "/agent/stream",
-    async function* ({ query }) {
+    async function* ({ query, request }) {
+      // Auth + ownership before streaming (EventSource can't send headers, so this
+      // rides on the session cookie). On failure, emit one event and end the stream.
+      const userId = await getUserId(request);
+      if (!userId) {
+        yield sse({ data: { event: "unauthorized" } });
+        return;
+      }
+      const [proj] = await db
+        .select()
+        .from(project)
+        .where(and(eq(project.id, query.projectId), eq(project.userId, userId)))
+        .limit(1);
+      if (!proj) {
+        yield sse({ data: { event: "project_not_found" } });
+        return;
+      }
+      // Resume: load any prior conversation to seed the session (empty for a new project).
+      const initialContext = await loadContext(query.projectId);
+
       const queue = createEventQueue<AgentEvent>();
       let session: AgentSession | undefined;
 
@@ -55,12 +108,17 @@ export const app = new Elysia()
       const runner = (async () => {
         try {
           const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
-          session = await AgentSession.create(provider, { onEvent: (e) => queue.push(e) });
+          session = await AgentSession.create(provider, {
+            onEvent: (e) => queue.push(e),
+            persist: messagePersister(query.projectId),
+            initialContext,
+          });
           sessions.set(session.id, session); // now discoverable by follow-up POSTs
           // Start the dev server in parallel with the first build so the preview is
           // live *while* the agent edits (Vite HMR shows progress), not only after.
           const preview = session.startPreview(); // pushes preview_ready (with the URL)
-          await session.submit(query.prompt); // first turn — edits stream to the live preview
+          // prompt present = a new project's first build; absent = reopening (resume).
+          if (query.prompt) await session.submit(query.prompt);
           await preview.catch(() => { }); // settle/surface any preview startup error
         } catch (e) {
           queue.push({ ts: new Date().toISOString(), sessionId: "", event: "stream_error", message: String(e) });
@@ -96,7 +154,10 @@ export const app = new Elysia()
       }
     },
     {
-      query: t.Object({ prompt: t.String({ minLength: 1 }) }),
+      query: t.Object({
+        projectId: t.String(),
+        prompt: t.Optional(t.String({ minLength: 1 })),
+      }),
     },
   )
   // Follow-up prompt for an existing session. Fire-and-forget: submit() queues it
