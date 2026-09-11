@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "bun src/server.ts"
+    "dev": "bun src/server.ts",
+    "invite": "bun run scripts/invite.ts"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

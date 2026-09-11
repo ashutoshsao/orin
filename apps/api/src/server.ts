@@ -9,10 +9,10 @@ import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
-import { auth } from "./auth";
+import { auth, githubEnabled, WEB_ORIGIN } from "./auth";
+import { acceptInvite, InviteError, peekInvite } from "./admin/invites";
 
 const PORT = 4000;
-const WEB_ORIGIN = "http://localhost:5173";
 
 // Resolve the signed-in user from the request's cookies (Better Auth session) and check
 // their access hasn't expired (7a) — on every request, not only at sign-in, so an expired
@@ -77,6 +77,27 @@ export const app = new Elysia()
   .mount(auth.handler)
   // The signed-in user's access (tier, steps left, expiry). Deliberately NOT behind the
   // expiry check — an expired account still needs to learn that it expired.
+  // What the sign-in screen needs to know before anyone is signed in.
+  .get("/config", () => ({ github: githubEnabled }))
+  // One-time email links (7b): look one up, then use it. Unauthenticated by nature — the
+  // token IS the credential, so an unknown/used/expired one is a flat 404 either way.
+  .get("/invite/:token", async ({ params, set }) => {
+    const link = await peekInvite(params.token);
+    if (!link) { set.status = 404; return { error: "invalid_link" }; }
+    return link;
+  })
+  .post(
+    "/invite/:token",
+    async ({ params, body, set }) => {
+      try {
+        return await acceptInvite(params.token, body.password);
+      } catch (e) {
+        set.status = e instanceof InviteError ? 400 : 500;
+        return { error: e instanceof InviteError ? e.message : "Could not use this link." };
+      }
+    },
+    { body: t.Object({ password: t.String({ minLength: 1 }) }) },
+  )
   .get("/me", async ({ request, set }) => {
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session?.user?.id) { set.status = 401; return { error: "unauthorized" }; }

@@ -1,5 +1,20 @@
-import { accountAccess, db } from "@repo/db";
+import { accountAccess, allowlist, db } from "@repo/db";
 import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
+
+// Limited-tier trial (7): 60 steps, access for 7 days. Bounds LLM spend, sandbox time and
+// R2 — BYOK visitors pay their own tokens but still use our sandboxes and storage.
+export const TRIAL_STEPS = 60;
+export const TRIAL_DAYS = 7;
+
+export const trialExpiry = (from = Date.now()) => new Date(from + TRIAL_DAYS * 24 * 60 * 60 * 1000);
+
+// The access row a brand-new account starts with: allowlisted email → unlimited, forever;
+// anyone else (a GitHub sign-in) → the BYOK trial.
+export async function accessForNewUser(email: string) {
+  const [listed] = await db.select().from(allowlist).where(eq(allowlist.email, email.toLowerCase())).limit(1);
+  if (listed) return { tier: "allowlist" as const, stepsLimit: null, expiresAt: null };
+  return { tier: "byok" as const, stepsLimit: TRIAL_STEPS, expiresAt: trialExpiry() };
+}
 
 // Why a step was refused: out of budget, access expired, or no access row at all (fail
 // closed — every account gets one at sign-up and existing ones were backfilled).

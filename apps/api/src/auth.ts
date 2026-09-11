@@ -1,34 +1,37 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
-import { eq } from "drizzle-orm";
-import { db, allowlist, accountAccess } from "@repo/db";
+import { db, accountAccess } from "@repo/db";
+import { accessForNewUser } from "./persistence/access";
+
+export const WEB_ORIGIN = process.env.WEB_ORIGIN ?? "http://localhost:5173";
+
+// GitHub sign-in is on only when its OAuth app is configured (7b), so local dev without
+// credentials still boots — the web asks GET /config whether to show the button.
+const github =
+  process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
+    ? { clientId: process.env.GITHUB_CLIENT_ID, clientSecret: process.env.GITHUB_CLIENT_SECRET }
+    : null;
+export const githubEnabled = github !== null;
 
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
-  emailAndPassword: { enabled: true },
-  // web (Vite) origin — needed for cross-origin auth requests
-  trustedOrigins: ["http://localhost:5173"],
+  // Email accounts are created only through one-time invite links (admin/invites.ts) —
+  // knowing an allowlisted address isn't enough to claim it. Sign-in stays open.
+  emailAndPassword: { enabled: true, disableSignUp: true },
+  socialProviders: github ? { github } : {},
+  // web (Vite) origin — needed for cross-origin auth requests and the OAuth callbackURL
+  trustedOrigins: [WEB_ORIGIN],
   databaseHooks: {
     user: {
       create: {
-        // Invite gate: reject signup unless the email is on the allowlist.
-        before: async (user) => {
-          const [row] = await db
-            .select()
-            .from(allowlist)
-            .where(eq(allowlist.email, user.email.toLowerCase()))
-            .limit(1);
-          if (!row) {
-            throw new APIError("FORBIDDEN", {
-              message: "This email isn't on the invite list yet.",
-            });
-          }
-        },
-        // Every account gets an access row (7a). Sign-up is allowlist-gated today, so the tier
-        // is `allowlist` (unlimited, never expires); GitHub/guest paths set their own in 7b/7c.
+        // Every account gets an access row (7a). The tier comes from the allowlist, never
+        // from the sign-in method: allowlisted → unlimited; anyone else (GitHub) → a limited
+        // trial. Guest links (7c) overwrite this row for their accounts.
         after: async (user) => {
-          await db.insert(accountAccess).values({ userId: user.id, tier: "allowlist" }).onConflictDoNothing();
+          await db
+            .insert(accountAccess)
+            .values({ userId: user.id, ...(await accessForNewUser(user.email)) })
+            .onConflictDoNothing();
         },
       },
     },

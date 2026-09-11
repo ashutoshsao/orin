@@ -16,6 +16,20 @@ export const allowlist = pgTable("allowlist", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// One-time links for email accounts (7b): `invite` sets the first password (creating the
+// account), `reset` replaces a forgotten one. Only the SHA-256 of the token is stored — the
+// link itself is shown once by the CLI/admin. `usedAt` set = dead; claimed atomically.
+export const INVITE_KINDS = ["invite", "reset"] as const;
+
+export const invite = pgTable("invite", {
+  tokenHash: text("token_hash").primaryKey(),
+  email: text("email").notNull(),
+  kind: text("kind", { enum: INVITE_KINDS }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // What a user may spend (7a). One row per user; the tier comes from the allowlist, never
 // from the sign-in method. `stepsLimit` null = unlimited; a step is one successful LLM call.
 // `expiresAt` null = never — access expires automatically, data is only deleted by prune (7d).

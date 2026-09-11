@@ -9,8 +9,7 @@
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun run migrate.ts",
-    "invite": "bun run invite.ts"
+    "db:migrate": "bun run migrate.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0"

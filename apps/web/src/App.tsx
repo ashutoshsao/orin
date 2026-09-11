@@ -6,6 +6,7 @@ import { AuthScreen } from '@/screens/AuthScreen'
 import { ProjectsScreen } from '@/screens/ProjectsScreen'
 import { Builder } from '@/screens/Builder'
 import { AccessEndedScreen } from '@/screens/AccessEndedScreen'
+import { InviteScreen } from '@/screens/InviteScreen'
 import { useAccess } from '@/lib/access'
 import type { Project } from '@/lib/api'
 
@@ -13,12 +14,18 @@ export default function App() {
   const { data: session, isPending } = authClient.useSession()
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
   const { access, refresh: refreshAccess } = useAccess(!!session)
+  // The only URL the app reads: /invite/<token> (7b). Everything else is one screen stack.
+  const inviteToken = window.location.pathname.startsWith('/invite/')
+    ? window.location.pathname.slice('/invite/'.length)
+    : null
 
   return (
     // reducedMotion="user" honours the OS setting — animation is a nicety, never a cost
     // imposed on someone who asked for less of it.
     <MotionConfig reducedMotion="user">
-      {isPending || (session && access === undefined) ? (
+      {inviteToken ? (
+        <InviteScreen token={inviteToken} />
+      ) : isPending || (session && access === undefined) ? (
         <div className="grid min-h-dvh place-items-center bg-background" />
       ) : !session ? (
         <AuthScreen />
