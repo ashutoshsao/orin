@@ -30,6 +30,19 @@ export const invite = pgTable("invite", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+// A reusable guest link (7c): the token IS the credential, and every visit signs into the
+// SAME account — any device, any number of opens, all sharing that account's step budget, so
+// forwarding the link can't multiply cost. Only the token's SHA-256 is stored.
+export const guestLink = pgTable("guest_link", {
+  id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  tokenHash: text("token_hash").notNull().unique(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  label: text("label"), // who it was sent to, for the admin list
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
 // What a user may spend (7a). One row per user; the tier comes from the allowlist, never
 // from the sign-in method. `stepsLimit` null = unlimited; a step is one successful LLM call.
 // `expiresAt` null = never — access expires automatically, data is only deleted by prune (7d).

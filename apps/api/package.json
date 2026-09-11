@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun src/server.ts",
-    "invite": "bun run scripts/invite.ts"
+    "invite": "bun run scripts/invite.ts",
+    "guest-link": "bun run scripts/guest-link.ts"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

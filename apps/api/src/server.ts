@@ -11,6 +11,7 @@ import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth, githubEnabled, WEB_ORIGIN } from "./auth";
 import { acceptInvite, InviteError, peekInvite } from "./admin/invites";
+import { redeemGuestLink } from "./admin/guests";
 
 const PORT = 4000;
 
@@ -98,6 +99,13 @@ export const app = new Elysia()
     },
     { body: t.Object({ password: t.String({ minLength: 1 }) }) },
   )
+  // Guest link (7c): hand back the URL that signs this browser into the link's account.
+  // Reusable — any device, any number of opens, all sharing that account's step budget.
+  .post("/g/:token", async ({ params, set }) => {
+    const redeemed = await redeemGuestLink(params.token);
+    if (!redeemed) { set.status = 404; return { error: "invalid_link" }; }
+    return redeemed;
+  })
   .get("/me", async ({ request, set }) => {
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session?.user?.id) { set.status = 401; return { error: "unauthorized" }; }

@@ -7,6 +7,7 @@ import { ProjectsScreen } from '@/screens/ProjectsScreen'
 import { Builder } from '@/screens/Builder'
 import { AccessEndedScreen } from '@/screens/AccessEndedScreen'
 import { InviteScreen } from '@/screens/InviteScreen'
+import { GuestScreen } from '@/screens/GuestScreen'
 import { useAccess } from '@/lib/access'
 import type { Project } from '@/lib/api'
 
@@ -14,16 +15,19 @@ export default function App() {
   const { data: session, isPending } = authClient.useSession()
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
   const { access, refresh: refreshAccess } = useAccess(!!session)
-  // The only URL the app reads: /invite/<token> (7b). Everything else is one screen stack.
-  const inviteToken = window.location.pathname.startsWith('/invite/')
-    ? window.location.pathname.slice('/invite/'.length)
-    : null
+  // The only URLs the app reads: /invite/<token> (7b) and /g/<token> (7c). Everything else
+  // is one screen stack.
+  const path = window.location.pathname
+  const inviteToken = path.startsWith('/invite/') ? path.slice('/invite/'.length) : null
+  const guestToken = path.startsWith('/g/') ? path.slice('/g/'.length) : null
 
   return (
     // reducedMotion="user" honours the OS setting — animation is a nicety, never a cost
     // imposed on someone who asked for less of it.
     <MotionConfig reducedMotion="user">
-      {inviteToken ? (
+      {guestToken ? (
+        <GuestScreen token={guestToken} />
+      ) : inviteToken ? (
         <InviteScreen token={inviteToken} />
       ) : isPending || (session && access === undefined) ? (
         <div className="grid min-h-dvh place-items-center bg-background" />
