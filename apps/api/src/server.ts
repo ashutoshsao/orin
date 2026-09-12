@@ -11,7 +11,9 @@ import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth, githubEnabled, WEB_ORIGIN } from "./auth";
 import { acceptInvite, InviteError, peekInvite } from "./admin/invites";
-import { redeemGuestLink } from "./admin/guests";
+import { createGuestLink, listGuestLinks, redeemGuestLink, revokeGuestLink } from "./admin/guests";
+import { createInviteLink } from "./admin/invites";
+import { isAdminEmail, usageOverview } from "./admin/usage";
 
 const PORT = 4000;
 
@@ -27,6 +29,16 @@ async function authorize(request: Request): Promise<Authorized> {
   const access = await checkAccess(userId);
   if (!access.ok) return { ok: false, status: 403, error: access.reason === "expired" ? "access_expired" : "no_access" };
   return { ok: true, userId, limited: access.limited };
+}
+
+// Admin routes are gated on the session's email being in ADMIN_EMAILS — checked server-side
+// on every one of them, never by hiding a button. Being on the allowlist is not enough: it
+// buys unlimited building, not the ability to mint access for others. Destructive work
+// (prune) stays a CLI: irreversible things don't get an internet-facing button.
+async function requireAdmin(request: Request): Promise<{ ok: true } | { ok: false; status: 401 | 403 }> {
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session?.user?.id) return { ok: false, status: 401 };
+  return isAdminEmail(session.user.email) ? { ok: true } : { ok: false, status: 403 };
 }
 
 async function ownsProject(userId: string, projectId: string): Promise<boolean> {
@@ -106,10 +118,46 @@ export const app = new Elysia()
     if (!redeemed) { set.status = 404; return { error: "invalid_link" }; }
     return redeemed;
   })
+  // ── Admin (7g): guest links, invite links, usage. Same module the CLIs call.
+  .get("/admin/overview", async ({ request, set }) => {
+    const who = await requireAdmin(request);
+    if (!who.ok) { set.status = who.status; return { error: "forbidden" }; }
+    return { guests: await listGuestLinks(), usage: await usageOverview() };
+  })
+  .post(
+    "/admin/guest-links",
+    async ({ request, body, set }) => {
+      const who = await requireAdmin(request);
+      if (!who.ok) { set.status = who.status; return { error: "forbidden" }; }
+      return createGuestLink({ label: body.label, steps: body.steps, days: body.days });
+    },
+    { body: t.Object({ label: t.Optional(t.String()), steps: t.Optional(t.Number()), days: t.Optional(t.Number()) }) },
+  )
+  .post("/admin/guest-links/:id/revoke", async ({ request, params, set }) => {
+    const who = await requireAdmin(request);
+    if (!who.ok) { set.status = who.status; return { error: "forbidden" }; }
+    const revoked = await revokeGuestLink(params.id);
+    if (!revoked) { set.status = 404; return { error: "not_found" }; }
+    return { ok: true };
+  })
+  .post(
+    "/admin/invite-links",
+    async ({ request, body, set }) => {
+      const who = await requireAdmin(request);
+      if (!who.ok) { set.status = who.status; return { error: "forbidden" }; }
+      try {
+        return await createInviteLink(body.email, body.kind ?? "invite");
+      } catch (e) {
+        set.status = 400;
+        return { error: e instanceof Error ? e.message : "Could not create that link." };
+      }
+    },
+    { body: t.Object({ email: t.String({ minLength: 3 }), kind: t.Optional(t.Union([t.Literal("invite"), t.Literal("reset")])) }) },
+  )
   .get("/me", async ({ request, set }) => {
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session?.user?.id) { set.status = 401; return { error: "unauthorized" }; }
-    return { email: session.user.email, access: await getAccessView(session.user.id) };
+    return { email: session.user.email, isAdmin: isAdminEmail(session.user.email), access: await getAccessView(session.user.id) };
   })
   // Create a project (owned by the signed-in user).
   .post(

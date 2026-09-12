@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { eq, like } from "drizzle-orm";
-import { accountAccess, db, project, user } from "@repo/db";
+import { accountAccess, db, project, user, type AccessTier } from "@repo/db";
 import { r2, snapshotKey } from "../persistence/r2";
 import { findPruneCandidates, parseAge, prune } from "./prune";
 
@@ -8,7 +8,7 @@ import { findPruneCandidates, parseAge, prune } from "./prune";
 // R2 and Postgres go together, which a fake bucket wouldn't prove.
 const ids: string[] = [];
 
-async function makeAccount(opts: { tier: string; expiresAt: Date | null; withBundle?: boolean }) {
+async function makeAccount(opts: { tier: AccessTier; expiresAt: Date | null; withBundle?: boolean }) {
   const id = `test-prune-${crypto.randomUUID()}`;
   ids.push(id);
   await db.insert(user).values({ id, name: "prune test", email: `${id}@orin.test` });
