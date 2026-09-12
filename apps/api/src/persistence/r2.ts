@@ -18,10 +18,18 @@ export const r2 = new S3Client({
 
 // Codebase snapshots live under a per-user, per-project prefix; the commit hash names
 // the object so a project can hold many snapshots and the DB just points at the latest.
-export function snapshotPrefix(userId: string, projectId: string): string {
-  return `users/${userId}/projects/${projectId}/snapshots/`;
+// Limited tiers (guest / BYOK) live under `guests/` so a prune can delete one prefix and be
+// sure it touched nobody's permanent work (7a/7d). Allowlist accounts stay under `users/`.
+export type KeyScope = "users" | "guests";
+
+export function snapshotPrefix(scope: KeyScope, userId: string, projectId: string): string {
+  return `${scope}/${userId}/projects/${projectId}/snapshots/`;
 }
 
-export function snapshotKey(userId: string, projectId: string, commitHash: string): string {
-  return `${snapshotPrefix(userId, projectId)}${commitHash}.bundle`;
+export function snapshotKey(scope: KeyScope, userId: string, projectId: string, commitHash: string): string {
+  return `${snapshotPrefix(scope, userId, projectId)}${commitHash}.bundle`;
 }
+
+// The folder a key sits in — pruning reads it off the key rather than re-deriving the scope,
+// so bundles written under an older scope are still found.
+export const prefixOf = (key: string) => key.slice(0, key.lastIndexOf("/") + 1);

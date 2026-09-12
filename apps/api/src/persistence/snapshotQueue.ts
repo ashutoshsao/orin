@@ -1,7 +1,7 @@
 import { RedisClient } from "bun";
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { db, project, snapshot } from "@repo/db";
-import { r2, snapshotKey, snapshotPrefix } from "./r2";
+import { prefixOf, r2, snapshotKey, type KeyScope } from "./r2";
 import { bundlesToDelete } from "./retention";
 import type { SnapshotJob } from "../agent/agent";
 
@@ -26,13 +26,13 @@ const lastPushed = new Map<string, string>();
 // Producer bound to one project/user, injected into AgentSession as `enqueueSnapshot`.
 // `rewindGen` is the project's generation when the session started: every job carries it,
 // and the worker drops jobs from a generation a rewind has since ended.
-export function snapshotEnqueuer(projectId: string, userId: string, rewindGen: number) {
+export function snapshotEnqueuer(projectId: string, userId: string, rewindGen: number, scope: KeyScope) {
   return async (job: SnapshotJob) => {
     if (job.kind === "push") {
       const jobId = crypto.randomUUID();
       bundles.set(jobId, job.bundle);
       await producer.send("XADD", [STREAM, "*",
-        "kind", "push", "jobId", jobId, "projectId", projectId, "userId", userId,
+        "kind", "push", "jobId", jobId, "projectId", projectId, "userId", userId, "scope", scope,
         "commitHash", job.commitHash, "n", String(job.n), "gen", String(rewindGen)]);
     } else {
       await producer.send("XADD", [STREAM, "*",
@@ -77,7 +77,7 @@ async function handle(fields: Record<string, string>) {
     if (!bytes) return; // lost in-flight (process restart) — round is re-done later
     // Cheap early exit: don't upload a bundle a rewind has already made obsolete.
     if ((await currentGen(projectId)) !== gen) return logWorker("snapshot_job_stale", { projectId, commitHash, gen });
-    const key = snapshotKey(fields.userId, projectId, commitHash);
+    const key = snapshotKey((fields.scope as KeyScope) ?? "users", fields.userId, projectId, commitHash);
     await r2.write(key, bytes);
     // The authoritative check. The UPDATE ... WHERE rewind_gen = gen takes the project row
     // lock, so a rewind (which bumps the gen on that row) runs wholly before or after this
@@ -99,7 +99,7 @@ async function handle(fields: Record<string, string>) {
       return logWorker("snapshot_job_stale", { projectId, commitHash, gen });
     }
     lastPushed.set(projectId, commitHash);
-    await pruneBundles(fields.userId, projectId, key);
+    await pruneBundles(projectId, key);
   } else if (kind === "mark") {
     // No-op round (no new commit): the marker may advance only if HEAD is durably pushed.
     if (lastPushed.get(projectId) === commitHash) await advanceDurable(db, projectId, gen, n);
@@ -110,9 +110,9 @@ async function handle(fields: Record<string, string>) {
 // landed, so a failed upload never deletes anything and a project is never left at zero.
 // Lists the prefix rather than trusting snapshot rows, so it also sweeps bundles orphaned
 // by earlier rewinds. Best-effort: a failure just leaves extra objects for the next push.
-async function pruneBundles(userId: string, projectId: string, latestKey: string) {
+async function pruneBundles(projectId: string, latestKey: string) {
   try {
-    const listed = await r2.list({ prefix: snapshotPrefix(userId, projectId), maxKeys: 1000 });
+    const listed = await r2.list({ prefix: prefixOf(latestKey), maxKeys: 1000 });
     const doomed = bundlesToDelete(listed.contents ?? [], latestKey);
     for (const key of doomed) await r2.delete(key);
     if (doomed.length) logWorker("snapshot_bundles_pruned", { projectId, count: doomed.length });

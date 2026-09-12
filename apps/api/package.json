@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "bun src/server.ts",
     "invite": "bun run scripts/invite.ts",
-    "guest-link": "bun run scripts/guest-link.ts"
+    "guest-link": "bun run scripts/guest-link.ts",
+    "prune-guests": "bun run scripts/prune-guests.ts"
   },
   "dependencies": {
     "@apollo/server": "^5.5.1",

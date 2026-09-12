@@ -239,7 +239,7 @@ export const app = new Elysia()
         const session = await AgentSession.create(provider, {
           onEvent,
           persist: messagePersister(projectId),
-          enqueueSnapshot: snapshotEnqueuer(projectId, userId, rewindGen),
+          enqueueSnapshot: snapshotEnqueuer(projectId, userId, rewindGen, who.limited ? "guests" : "users"),
           restoreSnapshot: snapshotLoader(projectId),
           stepBudget: stepBudget(userId),
           initialContext,
