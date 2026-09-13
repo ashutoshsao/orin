@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { eq, inArray, like } from "drizzle-orm";
+import { inArray, like } from "drizzle-orm";
 import { accountAccess, allowlist, db, user } from "@repo/db";
 
 // ADMIN_EMAILS is read when the module loads, so it's set before anything is imported: the

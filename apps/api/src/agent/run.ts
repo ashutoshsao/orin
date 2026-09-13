@@ -1,7 +1,7 @@
-import { DeepSeekProvider } from "./LLM_Providers/DeepSeek/DeepSeek.interface";
+import { serverProvider } from "./LLM_Providers";
 import { AgentSession } from "./agent";
 
-const llmProvider = new DeepSeekProvider("deepseek-v4-flash", "low");
+const llmProvider = serverProvider("low");
 
 // Sandbox is the workspace now — no local scaffoldWorkspace() / cwd anymore.
 const session = await AgentSession.create(llmProvider);

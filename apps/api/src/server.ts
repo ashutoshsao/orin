@@ -2,7 +2,7 @@ import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db, message, project, snapshot } from "@repo/db";
-import { DeepSeekProvider } from "./agent/LLM_Providers/DeepSeek/DeepSeek.interface";
+import { serverProvider } from "./agent/LLM_Providers";
 import { AgentSession } from "./agent/agent";
 import { closeLive, closeOtherLives, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
@@ -283,7 +283,7 @@ export const app = new Elysia()
         // Resume: load any prior conversation to seed the session (empty for a new project).
         const initialContext = await loadContext(projectId);
         const [{ rewindGen }] = await db.select({ rewindGen: project.rewindGen }).from(project).where(eq(project.id, projectId));
-        const provider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
+        const provider = serverProvider("low");
         const session = await AgentSession.create(provider, {
           onEvent,
           persist: messagePersister(projectId),

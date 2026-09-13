@@ -1,10 +1,10 @@
-import { DeepSeekProvider } from "./LLM_Providers/DeepSeek/DeepSeek.interface";
+import { serverProvider } from "./LLM_Providers";
 import { AgentSession } from "./agent";
 
 // Like run.ts, but keeps the sandbox alive after the build and serves the app so
 // you can open it in a browser — and independently confirms it responds 200,
 // rather than trusting the agent's own "done" claim.
-const llmProvider = new DeepSeekProvider("deepseek-v4.1-flash-expires-on-0910", "low");
+const llmProvider = serverProvider("low");
 const session = await AgentSession.create(llmProvider);
 
 try {
