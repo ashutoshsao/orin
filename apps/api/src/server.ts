@@ -2,9 +2,10 @@ import { Elysia, sse, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db, message, project, snapshot } from "@repo/db";
-import { serverProvider } from "./agent/LLM_Providers";
-import { AgentSession } from "./agent/agent";
-import { closeLive, closeOtherLives, getLive, getSession, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
+import { PROVIDERS, PROVIDER_IDS, isProviderId, serverProvider } from "./agent/LLM_Providers";
+import { clearKey, hasKey, keyInfo, providerForUser, setKey, validateKey } from "./persistence/byok";
+import { AgentSession, type AgentEvent } from "./agent/agent";
+import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
@@ -91,7 +92,11 @@ export const app = new Elysia()
   // The signed-in user's access (tier, steps left, expiry). Deliberately NOT behind the
   // expiry check — an expired account still needs to learn that it expired.
   // What the sign-in screen needs to know before anyone is signed in.
-  .get("/config", () => ({ github: githubEnabled }))
+  .get("/config", () => ({
+    github: githubEnabled,
+    // Providers a BYOK visitor can choose, with suggested models (fast tier first).
+    providers: PROVIDER_IDS.map((id) => ({ id, label: PROVIDERS[id].label, models: PROVIDERS[id].models })),
+  }))
   // One-time email links (7b): look one up, then use it. Unauthenticated by nature — the
   // token IS the credential, so an unknown/used/expired one is a flat 404 either way.
   .get("/invite/:token", async ({ params, set }) => {
@@ -117,6 +122,28 @@ export const app = new Elysia()
     const redeemed = await redeemGuestLink(params.token);
     if (!redeemed) { set.status = 404; return { error: "invalid_link" }; }
     return redeemed;
+  })
+  // Store a BYOK visitor's key for this server's lifetime (7f), after proving it works.
+  // Deliberately no logging in here: the body carries a live credential.
+  .post(
+    "/byok",
+    async ({ request, body, set }) => {
+      const who = await authorize(request);
+      if (!who.ok) { set.status = who.status; return { error: who.error }; }
+      if (!isProviderId(body.provider)) { set.status = 400; return { error: "unknown_provider" }; }
+      const key = { provider: body.provider, apiKey: body.apiKey.trim(), model: body.model?.trim() || undefined };
+      const checked = await validateKey(key);
+      if (!checked.ok) { set.status = 400; return { error: checked.message }; }
+      setKey(who.userId, key);
+      return { ok: true, provider: key.provider, model: key.model ?? null };
+    },
+    { body: t.Object({ provider: t.String(), apiKey: t.String({ minLength: 8 }), model: t.Optional(t.String()) }) },
+  )
+  .delete("/byok", async ({ request, set }) => {
+    const who = await authorize(request);
+    if (!who.ok) { set.status = who.status; return { error: who.error }; }
+    clearKey(who.userId);
+    return { ok: true };
   })
   // ── Admin (7g): guest links, invite links, usage. Same module the CLIs call.
   .get("/admin/overview", async ({ request, set }) => {
@@ -157,7 +184,15 @@ export const app = new Elysia()
   .get("/me", async ({ request, set }) => {
     const session = await auth.api.getSession({ headers: request.headers });
     if (!session?.user?.id) { set.status = 401; return { error: "unauthorized" }; }
-    return { email: session.user.email, isAdmin: isAdminEmail(session.user.email), access: await getAccessView(session.user.id) };
+    const access = await getAccessView(session.user.id);
+    return {
+      email: session.user.email,
+      isAdmin: isAdminEmail(session.user.email),
+      access,
+      // BYOK visitors bring their own key; it lives in memory only, so the page has to ask
+      // again after a restart. `key` never leaves the server — only which provider it is.
+      byok: access?.tier === "byok" ? { needsKey: !hasKey(session.user.id), key: keyInfo(session.user.id), providers: PROVIDER_IDS } : null,
+    };
   })
   // Create a project (owned by the signed-in user).
   .post(
@@ -276,14 +311,26 @@ export const app = new Elysia()
       // Attach to the project's live session, or start one. The session is owned by the
       // server (liveSessions.ts); this stream is only a subscriber to it.
       const projectId = query.projectId;
+      // BYOK visitors build with their own key, held in memory only (7f). No key, no session.
+      const byokProvider = proj.userId === userId && who.limited ? providerForUser(userId) : null;
+      const needsOwnKey = (await getAccessView(userId))?.tier === "byok";
+      if (needsOwnKey && !byokProvider) {
+        yield sse({ data: { event: "byok_key_required" } });
+        return;
+      }
       // A limited account keeps one live session: opening this project closes the others.
       // No await between this and startLive, so racing tabs can't both keep one.
       if (who.limited) closeOtherLives(userId, projectId);
-      const live = getLive(projectId) ?? startLive(projectId, userId, async (onEvent) => {
+      // Sandboxes are the cost of a free trial — limited accounts share a global ceiling.
+      if (who.limited && !guestSlotAvailable(projectId)) {
+        yield sse({ data: { event: "busy" } });
+        return;
+      }
+      const live = getLive(projectId) ?? startLive(projectId, userId, who.limited, async (onEvent: (e: AgentEvent) => void) => {
         // Resume: load any prior conversation to seed the session (empty for a new project).
         const initialContext = await loadContext(projectId);
         const [{ rewindGen }] = await db.select({ rewindGen: project.rewindGen }).from(project).where(eq(project.id, projectId));
-        const provider = serverProvider("low");
+        const provider = byokProvider ?? serverProvider("low");
         const session = await AgentSession.create(provider, {
           onEvent,
           persist: messagePersister(projectId),

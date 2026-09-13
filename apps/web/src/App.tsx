@@ -15,7 +15,7 @@ import type { Project } from '@/lib/api'
 export default function App() {
   const { data: session, isPending } = authClient.useSession()
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
-  const { access, refresh: refreshAccess } = useAccess(!!session)
+  const { access, byok, refresh: refreshAccess } = useAccess(!!session)
   // The only URLs the app reads: /invite/<token> (7b) and /g/<token> (7c). Everything else
   // is one screen stack.
   const path = window.location.pathname
@@ -40,7 +40,7 @@ export default function App() {
       ) : !access || access.expired ? (
         <AccessEndedScreen expired={!!access?.expired} />
       ) : !active ? (
-        <ProjectsScreen access={access} onOpen={(project, firstPrompt) => setActive({ project, firstPrompt })} />
+        <ProjectsScreen access={access} byok={byok} onAccessChange={refreshAccess} onOpen={(project, firstPrompt) => setActive({ project, firstPrompt })} />
       ) : (
         <Builder {...active} access={access} onAccessChange={refreshAccess} onBack={() => { setActive(null); refreshAccess() }} />
       )}

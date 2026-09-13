@@ -1,5 +1,5 @@
 import type { EffortType, LLMProvider } from "../types";
-import { ClaudeProvider, DEFAULT_CLAUDE_MODEL } from "./claude";
+import { ClaudeProvider, DEFAULT_CLAUDE_MODEL, FAST_CLAUDE_MODEL } from "./claude";
 import { OpenAICompatibleProvider } from "./openaiCompatible";
 
 // Where a session's model comes from (7e). Everything except Claude speaks the
@@ -7,11 +7,21 @@ import { OpenAICompatibleProvider } from "./openaiCompatible";
 // A BYOK visitor picks one of these and supplies the key (7f); server-keyed sessions use
 // the env key for the same provider.
 
+// Models we suggest per provider, fast tier FIRST. An agent loop makes many small calls, so
+// a flash-tier model is both cheaper and noticeably snappier; the heavier model is there when
+// a build needs more reasoning. `unverified: true` means the id came from the user/provider
+// docs and hasn't been exercised here — the BYOK form keeps the field editable for that reason.
+export type ModelChoice = { id: string; label: string; unverified?: boolean };
+
 export const PROVIDERS = {
   deepseek: {
     label: "DeepSeek",
     baseURL: "https://api.deepseek.com",
     defaultModel: "deepseek-v4.1-flash-expires-on-0910",
+    models: [
+      { id: "deepseek-v4.1-flash-expires-on-0910", label: "v4.1 Flash — fast, what Orin builds with" },
+      { id: "deepseek-v4-pro", label: "v4 Pro — slower, more reasoning" },
+    ] as ModelChoice[],
     envKey: "DEEPSEEK_API_KEY",
     // DeepSeek 400s unless its reasoning trace is echoed back after a tool call.
     echoReasoning: true,
@@ -20,6 +30,7 @@ export const PROVIDERS = {
     label: "OpenAI",
     baseURL: "https://api.openai.com/v1",
     defaultModel: null, // no guessed default: set ORIN_MODEL / pick one in the BYOK form
+    models: [] as ModelChoice[], // ids move faster than this file — type one in
     envKey: "OPENAI_API_KEY",
     echoReasoning: false,
   },
@@ -27,13 +38,18 @@ export const PROVIDERS = {
     label: "Gemini",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
     defaultModel: null, // as above — model ids move faster than this file
+    models: [{ id: "gemini-3.8-flash", label: "3.8 Flash — fast tier", unverified: true }] as ModelChoice[],
     envKey: "GEMINI_API_KEY",
     echoReasoning: false,
   },
   anthropic: {
     label: "Claude",
     baseURL: null, // its own SDK and protocol
-    defaultModel: DEFAULT_CLAUDE_MODEL,
+    defaultModel: FAST_CLAUDE_MODEL,
+    models: [
+      { id: FAST_CLAUDE_MODEL, label: "Haiku 4.5 — fast tier" },
+      { id: DEFAULT_CLAUDE_MODEL, label: "Opus 5 — most capable" },
+    ] as ModelChoice[],
     envKey: "ANTHROPIC_API_KEY",
     echoReasoning: false,
   },

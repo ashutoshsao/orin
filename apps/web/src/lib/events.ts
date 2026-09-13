@@ -33,6 +33,8 @@ export function eventKind(e: AgentEvent): EventKind {
     case 'unauthorized':
     case 'access_expired':
     case 'no_access':
+    case 'byok_key_required':
+    case 'busy':
     case 'project_not_found':
     case 'snapshot_error':
     case 'budget_error':
@@ -63,6 +65,8 @@ export function errorText(e: AgentEvent): string {
     case 'unauthorized': return 'You are not signed in.'
     case 'access_expired': return 'Your access to Orin has expired. Your projects are still saved.'
     case 'no_access': return 'This account has no access to Orin.'
+    case 'byok_key_required': return 'Add your API key on the home screen to start building.'
+    case 'busy': return 'Orin is at capacity for trial sessions. Try again in a few minutes.'
     case 'project_not_found': return 'That project could not be found.'
     default: return String(e.message ?? e.content ?? 'Something went wrong.')
   }

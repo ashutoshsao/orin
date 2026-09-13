@@ -5,16 +5,23 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Kbd, Wordmark } from '@/components/brand'
-import { stepsLeftLabel, type Access } from '@/lib/access'
+import { stepsLeftLabel, type Access, type Byok } from '@/lib/access'
+import { ByokKeyForm } from '@/components/ByokKeyForm'
 
 // Home is the "describe an app" moment, not a dashboard: the composer is centered and
 // given the viewport, with saved projects kept quietly below it (and absent entirely
 // until there are some, so a first-time user sees only the one thing to do).
-export function ProjectsScreen({ access, onOpen }: { access: Access; onOpen: (p: Project, firstPrompt?: string) => void }) {
+export function ProjectsScreen({ access, byok, onAccessChange, onOpen }: {
+  access: Access
+  byok: Byok | null
+  onAccessChange: () => void
+  onOpen: (p: Project, firstPrompt?: string) => void
+}) {
   const [projects, setProjects] = useState<Project[] | null>(null)
   const [prompt, setPrompt] = useState('')
   const [creating, setCreating] = useState(false)
   const outOfSteps = access.stepsLeft === 0
+  const needsKey = !!byok?.needsKey
   const stepsLabel = stepsLeftLabel(access)
 
   useEffect(() => {
@@ -28,7 +35,7 @@ export function ProjectsScreen({ access, onOpen }: { access: Access; onOpen: (p:
 
   async function create() {
     const text = prompt.trim()
-    if (!text || creating || outOfSteps) return
+    if (!text || creating || outOfSteps || needsKey) return
     setCreating(true)
     const res = await postJSON('/projects', { name: text.slice(0, 60) })
     setCreating(false)
@@ -62,6 +69,11 @@ export function ProjectsScreen({ access, onOpen }: { access: Access; onOpen: (p:
           </p>
         )}
 
+        {needsKey ? (
+          <div className="mt-11 w-full">
+            <ByokKeyForm onSaved={onAccessChange} />
+          </div>
+        ) : (
         <form
           onSubmit={(e) => { e.preventDefault(); create() }}
           className="mt-11 w-full rounded-[18px] border bg-card text-left shadow-[0_1px_0_rgb(28_24_20/0.04),0_18px_40px_-18px_rgb(60_40_20/0.28)] transition-colors focus-within:border-ring dark:shadow-[0_24px_48px_-24px_rgb(0_0_0/0.8)]"
@@ -83,6 +95,7 @@ export function ProjectsScreen({ access, onOpen }: { access: Access; onOpen: (p:
             </Button>
           </div>
         </form>
+        )}
       </section>
 
       {projects === null && (

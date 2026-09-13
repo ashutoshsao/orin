@@ -15,6 +15,8 @@ import type { ContextType, LLMResponseType, ToolCall, ToolDefinition, UsageType 
 // Claude API guidance (a low cap truncates a build mid-thought).
 const MAX_TOKENS = 16_000;
 export const DEFAULT_CLAUDE_MODEL = "claude-opus-5";
+// The flash-tier equivalent: an agent loop makes many small calls, where speed beats depth.
+export const FAST_CLAUDE_MODEL = "claude-haiku-4-5";
 
 export type ClaudeConfig = {
   apiKey: string;

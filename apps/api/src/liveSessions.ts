@@ -24,6 +24,7 @@ type Subscriber = { push: (e: StreamEvent) => void; end: () => void };
 type Live = {
   projectId: string;
   userId: string; // owner — lets a limited account's other sessions be found and closed
+  limited: boolean; // guest / BYOK — counted against the global sandbox cap (7f)
   session: AgentSession | null; // null while the sandbox boots
   subscribers: Set<Subscriber>;
   buffer: StreamEvent[];
@@ -67,10 +68,11 @@ function broadcast(live: Live, e: AgentEvent) {
 export function startLive(
   projectId: string,
   userId: string,
+  limited: boolean,
   boot: (onEvent: (e: AgentEvent) => void) => Promise<{ session: AgentSession; afterReady: () => Promise<void> }>,
 ): Live {
   const live: Live = {
-    projectId, userId, session: null, subscribers: new Set(), buffer: [], nextId: 1,
+    projectId, userId, limited, session: null, subscribers: new Set(), buffer: [], nextId: 1,
     grace: null, closed: false, runActive: false,
   };
   lives.set(projectId, live);
@@ -151,4 +153,23 @@ export function closeOtherLives(userId: string, keepProjectId: string): number {
     closed++;
   }
   return closed;
+}
+
+// Sandboxes are the real cost of a free trial, so limited accounts share a global ceiling
+// (7f): one busy afternoon on the portfolio can't spin up unbounded E2B VMs. Allowlist
+// accounts are not counted and never blocked.
+export const GUEST_SANDBOX_CAP = Number(process.env.ORIN_MAX_GUEST_SANDBOXES ?? 3);
+
+export function liveGuestCount(): number {
+  let n = 0;
+  for (const live of lives.values()) if (live.limited && !live.closed) n++;
+  return n;
+}
+
+// True when a limited account may start a session: either it already owns the live one for
+// this project (reattaching costs nothing new) or there's room under the cap.
+export function guestSlotAvailable(projectId: string): boolean {
+  const existing = lives.get(projectId);
+  if (existing && !existing.closed) return true;
+  return liveGuestCount() < GUEST_SANDBOX_CAP;
 }
