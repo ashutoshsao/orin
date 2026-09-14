@@ -24,6 +24,12 @@
         "WEB_ORIGIN",
         "ORIN_GRACE_MS"
       ]
+    },
+    "test": {
+      "cache": false,
+      "passThroughEnv": [
+        "ADMIN_EMAILS"
+      ]
     }
   }
 }

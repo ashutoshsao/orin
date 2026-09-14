@@ -4,7 +4,8 @@
     "build": "turbo run build",
     "dev": "docker compose up -d --wait && turbo run dev --filter=api --filter=@repo/web",
     "lint": "turbo run lint",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "test": "docker compose up -d --wait && turbo run test"
   },
   "devDependencies": {
     "eslint": "^8.57.0",

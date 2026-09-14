@@ -7,7 +7,8 @@
     "dev": "bun src/server.ts",
     "invite": "bun run scripts/invite.ts",
     "guest-link": "bun run scripts/guest-link.ts",
-    "prune-guests": "bun run scripts/prune-guests.ts"
+    "prune-guests": "bun run scripts/prune-guests.ts",
+    "test": "bun test"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",

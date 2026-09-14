@@ -37,6 +37,18 @@ const get = (path: string, cookie?: string) => fetch(API + path, { headers: cook
 const post = (path: string, body: unknown, cookie?: string) =>
   fetch(API + path, { method: "POST", headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) });
 
+// The k8s readiness/liveness probes hit /config (06-api.yml) — it must answer for an
+// unauthenticated caller, or every rollout fails its probe and the pod never goes ready.
+describe("/config (the probe endpoint)", () => {
+  test("answers without a cookie, and says which providers exist", async () => {
+    const res = await get("/config");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { github: boolean; providers: { id: string; models: unknown[] }[] };
+    expect(typeof body.github).toBe("boolean");
+    expect(body.providers.map((p) => p.id)).toContain("deepseek");
+  });
+});
+
 describe("/admin routes", () => {
   test("signed out → 401 on every route", async () => {
     expect((await get("/admin/overview")).status).toBe(401);
