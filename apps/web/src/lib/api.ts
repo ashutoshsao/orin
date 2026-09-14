@@ -1,5 +1,7 @@
 // Server contract + shared shapes for the builder UI.
-export const API = 'http://localhost:4000'
+// Set VITE_API_URL at build time (Vercel env) for deployments; the fallback is the local
+// API from `bun run dev`. Baked in at build — changing it needs a redeploy, not a restart.
+export const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000'
 
 export type Project = { id: string; name: string; createdAt: string }
 
