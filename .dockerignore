@@ -1,0 +1,16 @@
+.git
+.turbo
+node_modules
+**/node_modules
+dist
+dist-ssr
+**/.env
+.env*
+*.log
+.DS_Store
+# Local-only (untracked) working files — never in an image.
+spec
+design
+saved-output
+.backup
+CLAUDE.md
