@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { eq } from "drizzle-orm";
-import { accountAccess, db, user } from "@repo/db";
-import { checkAccess, getAccessView, refundStep, reserveStep } from "./access";
+import { accountAccess, allowlist, db, user } from "@repo/db";
+import { accessForNewUser, checkAccess, getAccessView, refundStep, reserveStep, TRIAL_DAYS, TRIAL_STEPS } from "./access";
 
 // Runs against the local Postgres (`docker compose up -d`) with a throwaway user — the
 // guarantees under test (atomic reserve, CHECK constraint) live in SQL, so a fake DB
@@ -105,5 +105,24 @@ describe("getAccessView", () => {
     expect(await getAccessView(USER_ID)).toMatchObject({ tier: "guest", stepsLeft: 2, expired: true });
     await setAccess({ tier: "allowlist", stepsLimit: null, stepsUsed: 5 });
     expect(await getAccessView(USER_ID)).toMatchObject({ stepsLeft: null, expiresAt: null, expired: false });
+  });
+});
+
+describe("accessForNewUser (what a brand-new account gets)", () => {
+  const LISTED = `listed-${crypto.randomUUID()}@orin.test`;
+
+  test("an allowlisted email → unlimited, never expires", async () => {
+    await db.insert(allowlist).values({ email: LISTED }).onConflictDoNothing();
+    expect(await accessForNewUser(LISTED)).toEqual({ tier: "allowlist", stepsLimit: null, expiresAt: null });
+    // Case shouldn't matter — GitHub hands back whatever the user typed when they signed up.
+    expect((await accessForNewUser(LISTED.toUpperCase())).tier).toBe("allowlist");
+    await db.delete(allowlist).where(eq(allowlist.email, LISTED));
+  });
+
+  test("anyone else (a stranger signing in with GitHub) → the BYOK trial", async () => {
+    const access = await accessForNewUser(`stranger-${crypto.randomUUID()}@example.com`);
+    expect(access).toMatchObject({ tier: "byok", stepsLimit: TRIAL_STEPS });
+    const days = Math.round((access.expiresAt!.getTime() - Date.now()) / 86_400_000);
+    expect(days).toBe(TRIAL_DAYS);
   });
 });

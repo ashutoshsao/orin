@@ -32,7 +32,12 @@ export function AuthScreen() {
     setBusy(true); setError(null)
     const res = await authClient.signIn.email({ email: email.trim().toLowerCase(), password })
     setBusy(false)
-    if (res.error) setError(res.error.message ?? 'That email and password did not match.')
+    if (res.error) {
+      // Better Auth answers an unknown email and a wrong password identically, on purpose — it
+      // won't confirm which addresses exist. So the message covers both, and points at the only
+      // way an email account can come to exist.
+      setError("That email and password didn't match. Email accounts are invite-only — use the link you were sent, or continue with GitHub.")
+    }
   }
 
   return (
@@ -54,6 +59,11 @@ export function AuthScreen() {
           >
             <GithubMark /> Continue with GitHub
           </Button>
+        )}
+        {github && (
+          <p className="mt-3 text-center text-[13px] text-muted-foreground">
+            New here? Sign in with GitHub and bring your own API key.
+          </p>
         )}
 
         {!showEmail ? (
