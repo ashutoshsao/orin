@@ -96,6 +96,14 @@ describe("startDevServer", () => {
     expect(out).toMatchObject({ kind: "unreachable", httpStatus: "502" });
   });
 
+  // The agent loop keeps this handle to catch a crash that happens AFTER we stopped waiting.
+  test("hands the running command back to the caller", async () => {
+    const f = fake({ probes: [200] });
+    let given: unknown = null;
+    await startDevServer(f.sandbox, { ...f.args, onStarted: (h) => { given = h; } });
+    expect(given).toBe(f.handle);
+  });
+
   test("a server that dies late is reported as exited, not unreachable", async () => {
     const f = fake({ probes: ["refuse"], exitBefore: 40, exitCode: 137 });
     const out = await startDevServer(f.sandbox, f.args);

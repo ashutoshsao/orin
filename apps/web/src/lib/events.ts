@@ -37,7 +37,7 @@ export function eventKind(e: AgentEvent): EventKind {
     case 'busy':
     case 'project_not_found':
     case 'snapshot_error':
-    case 'preview_server_exited':
+    case 'preview_failed':
     case 'preview_unreachable':
     case 'budget_error':
     case 'persist_error': return 'error'
@@ -58,6 +58,10 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
     case 'snapshot_skipped': return { label: 'not saved', detail: `workspace ${(Number(e.bytes) / 1024 / 1024).toFixed(1)} MB is over the snapshot limit` }
     case 'preview_ready': return { label: 'preview', detail: e.httpStatus === '200' ? 'live' : `status ${e.httpStatus}` }
     case 'preview_waiting': return { label: 'preview', detail: 'still starting' }
+    // Deliberately wordless about the cause. The agent has the stderr and is fixing it;
+    // showing a recruiter a stack trace makes Orin look broken, not the app being built.
+    case 'preview_server_exited': return { label: 'preview', detail: 'restarting' }
+    case 'preview_repairing': return { label: 'fixing', detail: 'a build error' }
     case 'sandbox_closed': return { label: 'environment', detail: 'closed' }
     default: return { label: e.event.replace(/_/g, ' '), detail: '' }
   }
@@ -71,15 +75,10 @@ export function errorText(e: AgentEvent): string {
     case 'byok_key_required': return 'Add your API key on the home screen to start building.'
     case 'busy': return 'Orin is at capacity for trial sessions. Try again in a few minutes.'
     case 'project_not_found': return 'That project could not be found.'
-    // The dev server died — almost always a compile error in the code just written. Its own
-    // stderr says more than any wording we could invent, so lead with that.
-    case 'preview_server_exited': {
-      const stderr = String(e.stderr ?? '').trim()
-      const last = stderr.split('\n').filter(Boolean).slice(-3).join('\n')
-      return last
-        ? `The preview server stopped (exit ${e.exitCode}):\n${last}`
-        : `The preview server stopped (exit ${e.exitCode}).`
-    }
+    // Only after the agent has had its attempts and the app still won't start. No stack
+    // trace even here — the agent saw it; the user gets something they can act on.
+    case 'preview_failed':
+      return "The app still isn't starting after a couple of attempts to fix it. Tell the agent what you were expecting and it can try again."
     case 'preview_unreachable':
       return `The preview didn't come up in time (last response: ${e.httpStatus}). The app may still be starting — try reloading the preview.`
     default: return String(e.message ?? e.content ?? 'Something went wrong.')

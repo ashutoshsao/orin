@@ -3,7 +3,7 @@ import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
-import { startDevServer } from "./devServer";
+import { startDevServer, type DevServerHandle } from "./devServer";
 import type { RestorePoint } from "../persistence/store";
 
 const TEMPLATE = "orin-react-workspace-dev";
@@ -29,6 +29,10 @@ Rules:
 // agent is never cut off mid-build. This is only a safety ceiling — `close()` in
 // the `finally` kills the sandbox as soon as a run finishes normally.
 const SANDBOX_TIMEOUT_MS = 60 * 60_000;
+
+// How much dev-server stderr to hand the agent. Enough for a Vite/esbuild error with its
+// code frame, bounded so a crash loop can't flood the context window.
+const DEV_SERVER_STDERR_CHARS = 2_000;
 
 // One structured agent event. Same shape that's logged to stdout and, when a sink
 // is provided, handed to `onEvent` — the seam the SSE transport taps without the
@@ -99,6 +103,12 @@ export class AgentSession {
   // used as the commit a `mark` (no-op round) refers to. The worker owns durability.
   private latestCommit: string | null = null;
   private stepBudget?: StepBudget;
+  // The running dev server, kept so the loop can notice it died after we stopped waiting.
+  private devServer?: DevServerHandle;
+  private previewPort = 8080;
+  // How many times we'll hand a crash back to the agent before telling the user. A cap
+  // matters: a crash the agent can't fix would otherwise loop until the step budget is gone.
+  private repairsLeft = 2;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -252,8 +262,10 @@ export class AgentSession {
   // devServer.ts (testable, no live VM); this turns its outcome into events. All three
   // outcomes are reported — "it never came up" is information the user needs, not silence.
   async startPreview(port = 8080): Promise<{ url: string; httpStatus: string }> {
+    this.previewPort = port;
     const outcome = await startDevServer(this.sandbox, {
       port,
+      onStarted: (handle) => { this.devServer = handle; },
       onProgress: (p) => this.log("preview_waiting", { port, url: p.url, ms: p.ms, httpStatus: p.httpStatus }),
     });
     switch (outcome.kind) {
@@ -261,8 +273,10 @@ export class AgentSession {
         this.log("preview_ready", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
         return { url: outcome.url, httpStatus: outcome.httpStatus };
       case "exited":
-        // The dev server's own stderr is the single most useful diagnostic in the system —
-        // usually a compile error in the code the agent just wrote. Say it out loud.
+        // The stderr rides along for the pod logs and /admin, but the web feed deliberately
+        // does NOT render it (lib/events.ts): a crash here is usually a compile error in the
+        // code the agent just wrote, and the agent is about to be handed it to fix. Showing a
+        // stack trace to someone watching a demo makes Orin look broken, not the generated app.
         this.log("preview_server_exited", {
           port, url: outcome.url, exitCode: outcome.exitCode, stderr: outcome.stderr, ms: outcome.ms,
         });
@@ -271,6 +285,46 @@ export class AgentSession {
         this.log("preview_unreachable", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
         return { url: outcome.url, httpStatus: outcome.httpStatus };
     }
+  }
+
+
+  // Called ONLY at a round boundary (the assistant's tool_calls and their results are both
+  // already in context), because that's the only place it's protocol-valid to append.
+  //
+  // If the app's dev server has died, the fix belongs to the agent, not the user: it wrote
+  // the code that broke, and it's the only party that can repair it. So the stderr goes into
+  // the agent's context as a plain user-role message and the server is restarted. Someone
+  // watching the build sees "fixing a build error", not a stack trace.
+  //
+  // Returns true if a repair was handed over — the caller keeps the loop running so the
+  // agent actually gets a turn to act on it.
+  private async repairDevServer(iteration: number): Promise<boolean> {
+    const handle = this.devServer;
+    if (!handle || handle.exitCode === undefined) return false; // no server yet, or still alive
+
+    const stderr = (handle.stderr ?? "").trim().slice(-DEV_SERVER_STDERR_CHARS);
+    this.devServer = undefined; // consumed — don't report the same corpse twice
+
+    if (this.repairsLeft <= 0) {
+      // Out of attempts. Now it IS the user's problem, so say so in plain words — still no
+      // stack trace, but never an indefinite "working on it".
+      this.log("preview_failed", { iteration, exitCode: handle.exitCode, stderr });
+      return false;
+    }
+    this.repairsLeft--;
+
+    this.context.push({
+      role: "user",
+      content:
+        `The dev server running the preview exited (code ${handle.exitCode}), so the app no longer builds or runs. ` +
+        `Fix the cause in the app's source, then stop and say what you fixed. Its output was:\n\n${stderr}`,
+    });
+    this.log("preview_repairing", { iteration, exitCode: handle.exitCode, stderr, repairsLeft: this.repairsLeft });
+
+    // Restart in the background: the agent edits while the server comes back up, exactly as
+    // on a normal build. If it dies again, the next round boundary catches it.
+    void this.startPreview(this.previewPort).catch(() => {});
+    return true;
   }
 
   // Stable id for the session registry / routing follow-up POSTs to this session.
@@ -367,9 +421,13 @@ export class AgentSession {
 
         this.context.push({ role: "assistant", content: response.content });
         this.log("final", { iteration: start, content: response.content });
+        // "Done" and "it runs" are different claims. If the dev server died, keep going —
+        // an agent that stops with a non-building app hasn't finished the job.
+        const repaired = await this.repairDevServer(start);
         const snap = await this.snapshot();
         await this.flush();
         await this.enqueueRound(snap);
+        if (repaired) { start++; continue; }
         break;
 
       } else if (response.status === "toolCall") {
@@ -398,6 +456,8 @@ export class AgentSession {
         // Round complete (assistant tool_calls + tool results both appended). Snapshot
         // the files this round wrote, persist the context rows, then hand the round to the
         // snapshot queue (the worker pushes to R2 and advances the durable-N marker).
+        // A crashed dev server is appended first, so it flushes with this round.
+        await this.repairDevServer(start);
         const snap = await this.snapshot();
         await this.flush();
         await this.enqueueRound(snap);

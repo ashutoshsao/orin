@@ -49,6 +49,9 @@ export async function startDevServer(
   opts: {
     port?: number;
     onProgress?: (p: PreviewProgress) => void;
+    // Hands back the running command so the caller can keep watching it after we stop
+    // waiting — the agent loop checks it at each round boundary to catch a late crash.
+    onStarted?: (handle: DevServerHandle) => void;
     // Seams for tests — production uses the real ones.
     fetchImpl?: typeof fetch;
     now?: () => number;
@@ -77,6 +80,7 @@ export async function startDevServer(
   // `exitCode` instead), so swallow it here or a crashing dev server becomes an unhandled
   // rejection that takes down the API process.
   handle.wait?.().catch(() => {});
+  opts.onStarted?.(handle);
 
   // Probe the PUBLIC url from here (the orchestrator), not localhost inside the sandbox —
   // this exercises the full path (E2B proxy → Vite host check → app), which is exactly what
