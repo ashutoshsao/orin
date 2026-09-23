@@ -305,6 +305,10 @@ export class AgentSession {
   // Returns true if a repair was handed over — the caller keeps the loop running so the
   // agent actually gets a turn to act on it.
   private async repairDevServer(iteration: number): Promise<boolean> {
+    // A closing session kills the sandbox, which exits the dev server too — that's a
+    // teardown, not a crash. Without this the last round of a disconnecting session would
+    // inject a bogus repair and try to restart a preview inside a dead sandbox.
+    if (this.closed) return false;
     const handle = this.devServer;
     if (!handle || handle.exitCode === undefined) return false; // no server yet, or still alive
 
