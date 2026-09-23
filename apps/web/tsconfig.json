@@ -4,7 +4,7 @@
   "compilerOptions": {
     "strictNullChecks": true,
     "jsx": "react-jsx",
-    "types": ["vite/client"],
+    "types": ["vite/client", "bun"],
     "allowImportingTsExtensions": true,
     "paths": { "@/*": ["./src/*"] }
   }

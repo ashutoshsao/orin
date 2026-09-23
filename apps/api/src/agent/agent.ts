@@ -4,6 +4,7 @@ import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
 import { startDevServer, type DevServerHandle } from "./devServer";
+import { connectHmr, moduleUrlPath, type HmrListener } from "./hmrListener";
 import type { RestorePoint } from "../persistence/store";
 
 const TEMPLATE = "orin-react-workspace-dev";
@@ -105,6 +106,9 @@ export class AgentSession {
   private stepBudget?: StepBudget;
   // The running dev server, kept so the loop can notice it died after we stopped waiting.
   private devServer?: DevServerHandle;
+  // Watches the app's compile errors over Vite's HMR socket (spec 9). null when we couldn't
+  // attach — the build carries on without it.
+  private hmr?: HmrListener | null;
   private previewPort = 8080;
   // How many times we'll hand a crash back to the agent before telling the user. A cap
   // matters: a crash the agent can't fix would otherwise loop until the step budget is gone.
@@ -254,6 +258,7 @@ export class AgentSession {
     // of hanging forever; the `closed` check then ends the loop at its next step.
     for (const resolve of this.pendingQuestions.values()) resolve("");
     this.pendingQuestions.clear();
+    this.hmr?.close();
     await this.sandbox.kill();
     this.log("sandbox_closed", { sandboxId: this.sandbox.sandboxId });
   }
@@ -271,6 +276,7 @@ export class AgentSession {
     switch (outcome.kind) {
       case "ready":
         this.log("preview_ready", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
+        void this.watchAppErrors(outcome.url);
         return { url: outcome.url, httpStatus: outcome.httpStatus };
       case "exited":
         // The stderr rides along for the pod logs and /admin, but the web feed deliberately
@@ -286,6 +292,54 @@ export class AgentSession {
     }
   }
 
+
+  // Subscribe to the app's compile errors. Best-effort by design: `connectHmr` returns null on
+  // anything unexpected (Vite moved the token, socket refused), and a build without the watcher
+  // is exactly what we shipped before it existed.
+  private async watchAppErrors(url: string) {
+    this.hmr?.close();
+    this.hmr = await connectHmr(url, {
+      // NOT rendered as an error in the web feed — the agent gets the message, the user gets
+      // "fixing". Same rule as a dead dev server.
+      onError: (e) => this.log("preview_error", { message: e.message, id: e.id, plugin: e.plugin }),
+    });
+    if (!this.hmr) this.log("preview_watch_unavailable", { url });
+  }
+
+  // The common case the dev-server exit path can't see: Vite stays up, serves 200 at `/`, and
+  // shows its overlay for a module that won't compile. Round boundary only, same as the other.
+  private async repairAppError(iteration: number): Promise<boolean> {
+    if (this.closed) return false;
+    const hmr = this.hmr;
+    if (!hmr?.error) return false;
+
+    // Ask before acting. Vite sends nothing when code starts compiling again, and the agent has
+    // very likely already fixed this in the round we're closing — re-reporting a stale error
+    // would send it chasing a bug that no longer exists.
+    if (!(await hmr.revalidate())) {
+      this.log("preview_recovered", { iteration });
+      return false;
+    }
+    const err = hmr.error;
+    if (!err) return false;
+
+    if (this.repairsLeft <= 0) {
+      this.log("preview_failed", { iteration, message: err.message, id: err.id });
+      return false;
+    }
+    this.repairsLeft--;
+
+    const where = moduleUrlPath(err.id);
+    this.context.push({
+      role: "user",
+      content:
+        `The app does not compile, so the preview is showing an error instead of your app` +
+        `${where ? ` — the failing module is ${where}` : ""}. Fix it, then stop and say what you fixed. ` +
+        `Vite reported:\n\n${err.message}`,
+    });
+    this.log("preview_repairing", { iteration, id: err.id, message: err.message, repairsLeft: this.repairsLeft });
+    return true;
+  }
 
   // Called ONLY at a round boundary (the assistant's tool_calls and their results are both
   // already in context), because that's the only place it's protocol-valid to append.
@@ -433,9 +487,9 @@ export class AgentSession {
 
         this.context.push({ role: "assistant", content: response.content });
         this.log("final", { iteration: start, content: response.content });
-        // "Done" and "it runs" are different claims. If the dev server died, keep going —
-        // an agent that stops with a non-building app hasn't finished the job.
-        const repaired = await this.repairDevServer(start);
+        // "Done" and "it runs" are different claims. If the dev server died or the app won't
+        // compile, keep going — an agent that stops with a broken app hasn't finished the job.
+        const repaired = (await this.repairDevServer(start)) || (await this.repairAppError(start));
         const snap = await this.snapshot();
         await this.flush();
         await this.enqueueRound(snap);
@@ -468,8 +522,9 @@ export class AgentSession {
         // Round complete (assistant tool_calls + tool results both appended). Snapshot
         // the files this round wrote, persist the context rows, then hand the round to the
         // snapshot queue (the worker pushes to R2 and advances the durable-N marker).
-        // A crashed dev server is appended first, so it flushes with this round.
-        await this.repairDevServer(start);
+        // A crash or compile error is appended first, so it flushes with this round. Exclusive:
+        // if the server is being restarted there's no live Vite to have an opinion about the code.
+        if (!(await this.repairDevServer(start))) await this.repairAppError(start);
         const snap = await this.snapshot();
         await this.flush();
         await this.enqueueRound(snap);

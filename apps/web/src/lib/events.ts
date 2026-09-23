@@ -61,6 +61,9 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
     // Deliberately wordless about the cause. The agent has the stderr and is fixing it;
     // showing a recruiter a stack trace makes Orin look broken, not the app being built.
     case 'preview_server_exited': return { label: 'preview', detail: 'restarting' }
+    case 'preview_error': return { label: 'found', detail: 'an error in the app' }
+    case 'preview_recovered': return { label: 'preview', detail: 'working again' }
+    case 'preview_watch_unavailable': return { label: 'preview', detail: 'error watch unavailable' }
     case 'preview_repairing': return { label: 'fixing', detail: 'the preview' }
     case 'sandbox_closed': return { label: 'environment', detail: 'closed' }
     default: return { label: e.event.replace(/_/g, ' '), detail: '' }
@@ -138,6 +141,20 @@ export function summarizeActivity(events: AgentEvent[]): string {
 // "building" forever on reopen. A run starts at run_start and ends at any of RUN_ENDS.
 const RUN_ENDS = new Set(['final', 'error', 'exception', 'max_iterations_reached', 'budget_exhausted', 'budget_error'])
 
+// Whether the generated app currently fails to compile. This is why the bar can't just say
+// "preview · live" whenever a URL exists: Vite keeps serving (and answering 200) while showing
+// its overlay for a broken module, so for a while the bar confidently said the opposite of what
+// the user was looking at. `preview_error` / `preview_recovered` come from the HMR watcher.
+function appBroken(events: AgentEvent[]): boolean {
+  let broken = false
+  for (const e of events) {
+    if (!e.sessionId && !e.local) continue
+    if (e.event === 'preview_error' || e.event === 'preview_failed') broken = true
+    else if (e.event === 'preview_recovered' || e.event === 'snapshot_restored') broken = false
+  }
+  return broken
+}
+
 export type RunStatus = { label: string; active: boolean; building: boolean }
 
 export function runStatus(
@@ -158,9 +175,15 @@ export function runStatus(
     else if (RUN_ENDS.has(e.event)) { lastEnd = i; endedBy = e.event }
     else if (e.event === 'llm_call' && typeof e.iteration === 'number') step = e.iteration
   })
+  const broken = appBroken(events)
   if (lastStart > lastEnd) {
+    // Mid-run with a broken app: the agent is about to be handed the error, so say what's
+    // happening rather than a step count the user can't act on.
+    if (broken) return { label: 'fixing an error', active: true, building: true }
     return { label: step ? `building · step ${step}` : 'building', active: true, building: true }
   }
+  // Run over and it still doesn't compile — never "preview · live" on top of an error screen.
+  if (broken) return { label: 'needs a fix', active: false, building: false }
   // A run cut off by the step limit is not "live" — saying so is the whole point.
   if (endedBy === 'max_iterations_reached') return { label: 'stopped · step limit', active: false, building: false }
   if (endedBy === 'budget_exhausted') return { label: 'stopped · trial ended', active: false, building: false }
