@@ -1,9 +1,16 @@
 import { accountAccess, allowlist, db } from "@repo/db";
 import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
+import { MAX_REPAIRS } from "../agent/config";
 
-// Limited-tier trial (7): 60 steps, access for 7 days. Bounds LLM spend, sandbox time and
-// R2 — BYOK visitors pay their own tokens but still use our sandboxes and storage.
-export const TRIAL_STEPS = 60;
+// Limited-tier trial (7): 60 steps to BUILD with, access for 7 days. Bounds LLM spend, sandbox
+// time and R2 — BYOK visitors pay their own tokens but still use our sandboxes and storage.
+export const TRIAL_BUILD_STEPS = 60;
+// A repair — the agent being handed its own crashed dev server or a module that won't compile —
+// spends a step like any other LLM call, because the budget is reserved in one atomic UPDATE and
+// carving out exceptions there is how races get in. So instead of making repairs free, the trial
+// is topped up by exactly the repair cap: nobody loses build steps to fixing the agent's mistake.
+// Derived, not a second magic number — raise MAX_REPAIRS and the allowance follows.
+export const TRIAL_STEPS = TRIAL_BUILD_STEPS + MAX_REPAIRS;
 export const TRIAL_DAYS = 7;
 
 export const trialExpiry = (from = Date.now()) => new Date(from + TRIAL_DAYS * 24 * 60 * 60 * 1000);

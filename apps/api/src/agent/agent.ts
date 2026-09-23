@@ -1,7 +1,7 @@
 import { Sandbox } from "e2b";
 import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
-import { config } from "./config";
+import { config, MAX_REPAIRS } from "./config";
 import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
 import { startDevServer, type DevServerHandle } from "./devServer";
 import { connectHmr, moduleUrlPath, type HmrListener } from "./hmrListener";
@@ -110,9 +110,9 @@ export class AgentSession {
   // attach — the build carries on without it.
   private hmr?: HmrListener | null;
   private previewPort = 8080;
-  // How many times we'll hand a crash back to the agent before telling the user. A cap
-  // matters: a crash the agent can't fix would otherwise loop until the step budget is gone.
-  private repairsLeft = 2;
+  // Shared by both repair paths (dead dev server, compile error) — a run gets this many
+  // attempts in total, not this many of each.
+  private repairsLeft = MAX_REPAIRS;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.

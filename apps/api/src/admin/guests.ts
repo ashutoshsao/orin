@@ -4,7 +4,7 @@ import { auth, magicLinkCapture, WEB_ORIGIN } from "../auth";
 import { TRIAL_DAYS, TRIAL_STEPS } from "../persistence/access";
 
 // Guest links (7c): one account behind a reusable link you send to someone. Every visit —
-// any device, any number of opens — signs into that same account, so its 60 steps are the
+// any device, any number of opens — signs into that same account, so its step budget is the
 // whole cost of sharing the link. Shared by the CLI and (7g) the admin page.
 
 const sha256 = (token: string) => new Bun.CryptoHasher("sha256").update(token).digest("hex");
