@@ -144,7 +144,11 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
         }
         return [...prev, e]
       })
-      if (e.event === 'preview_ready' && typeof e.url === 'string') setPreviewUrl(e.url)
+      // Also on `preview_unreachable`: the probe gave up, but the server may still be coming
+      // up — showing the frame (and the reload button) beats showing nothing forever.
+      if ((e.event === 'preview_ready' || e.event === 'preview_unreachable') && typeof e.url === 'string') {
+        setPreviewUrl(e.url)
+      }
       if (e.event === 'ask_user' && e.callId && e.question != null) {
         setPending({ callId: e.callId, question: e.question, options: e.options ?? [] })
       }

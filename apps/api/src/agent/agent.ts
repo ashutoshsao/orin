@@ -3,6 +3,7 @@ import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
 import { config } from "./config";
 import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
+import { startDevServer } from "./devServer";
 import type { RestorePoint } from "../persistence/store";
 
 const TEMPLATE = "orin-react-workspace-dev";
@@ -247,36 +248,29 @@ export class AgentSession {
     this.log("sandbox_closed", { sandboxId: this.sandbox.sandboxId });
   }
 
-  // Start the dev server and hand back a public URL. `--host` binds Vite to
-  // 0.0.0.0 so E2B's proxy can reach it (localhost-only wouldn't be reachable);
-  // `background` so it doesn't block. Then we *independently* poll the server
-  // (our own check, not the model's claim) before returning the getHost URL.
+  // Start the app's dev server and wait for the preview to answer. The waiting lives in
+  // devServer.ts (testable, no live VM); this turns its outcome into events. All three
+  // outcomes are reported — "it never came up" is information the user needs, not silence.
   async startPreview(port = 8080): Promise<{ url: string; httpStatus: string }> {
-    await this.sandbox.commands.run(`bun run dev --host --port ${port}`, {
-      cwd: WORKDIR,
-      background: true,
+    const outcome = await startDevServer(this.sandbox, {
+      port,
+      onProgress: (p) => this.log("preview_waiting", { port, url: p.url, ms: p.ms, httpStatus: p.httpStatus }),
     });
-
-    const url = `https://${this.sandbox.getHost(port)}`;
-
-    // Probe the PUBLIC url from here (the orchestrator), not localhost inside the
-    // sandbox — this exercises the full path (E2B proxy → Vite host check → app),
-    // which is exactly what the browser hits. A localhost probe would bypass the
-    // host check and give false confidence.
-    let httpStatus = "no-response";
-    for (let i = 0; i < 30; i++) {
-      try {
-        const res = await fetch(url);
-        httpStatus = String(res.status);
-        if (res.ok) break;
-      } catch {
-        // proxy/server not ready yet — retry
-      }
-      await Bun.sleep(500);
+    switch (outcome.kind) {
+      case "ready":
+        this.log("preview_ready", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
+        return { url: outcome.url, httpStatus: outcome.httpStatus };
+      case "exited":
+        // The dev server's own stderr is the single most useful diagnostic in the system —
+        // usually a compile error in the code the agent just wrote. Say it out loud.
+        this.log("preview_server_exited", {
+          port, url: outcome.url, exitCode: outcome.exitCode, stderr: outcome.stderr, ms: outcome.ms,
+        });
+        return { url: outcome.url, httpStatus: "server-exited" };
+      case "unreachable":
+        this.log("preview_unreachable", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
+        return { url: outcome.url, httpStatus: outcome.httpStatus };
     }
-
-    this.log("preview_ready", { port, url, httpStatus });
-    return { url, httpStatus };
   }
 
   // Stable id for the session registry / routing follow-up POSTs to this session.
