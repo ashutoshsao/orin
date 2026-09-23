@@ -61,7 +61,7 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
     // Deliberately wordless about the cause. The agent has the stderr and is fixing it;
     // showing a recruiter a stack trace makes Orin look broken, not the app being built.
     case 'preview_server_exited': return { label: 'preview', detail: 'restarting' }
-    case 'preview_repairing': return { label: 'fixing', detail: 'a build error' }
+    case 'preview_repairing': return { label: 'fixing', detail: 'the preview' }
     case 'sandbox_closed': return { label: 'environment', detail: 'closed' }
     default: return { label: e.event.replace(/_/g, ' '), detail: '' }
   }

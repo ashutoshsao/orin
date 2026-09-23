@@ -30,8 +30,8 @@ Rules:
 // the `finally` kills the sandbox as soon as a run finishes normally.
 const SANDBOX_TIMEOUT_MS = 60 * 60_000;
 
-// How much dev-server stderr to hand the agent. Enough for a Vite/esbuild error with its
-// code frame, bounded so a crash loop can't flood the context window.
+// How much dev-server stderr to hand the agent. Enough for Vite's startup error with its
+// stack, bounded so a crash loop can't flood the context window.
 const DEV_SERVER_STDERR_CHARS = 2_000;
 
 // One structured agent event. Same shape that's logged to stdout and, when a sink
@@ -274,9 +274,8 @@ export class AgentSession {
         return { url: outcome.url, httpStatus: outcome.httpStatus };
       case "exited":
         // The stderr rides along for the pod logs and /admin, but the web feed deliberately
-        // does NOT render it (lib/events.ts): a crash here is usually a compile error in the
-        // code the agent just wrote, and the agent is about to be handed it to fix. Showing a
-        // stack trace to someone watching a demo makes Orin look broken, not the generated app.
+        // does NOT render it (lib/events.ts): the agent is about to be handed it to fix, and a
+        // stack trace shown to someone watching a demo makes Orin look broken, not the app.
         this.log("preview_server_exited", {
           port, url: outcome.url, exitCode: outcome.exitCode, stderr: outcome.stderr, ms: outcome.ms,
         });
@@ -294,7 +293,14 @@ export class AgentSession {
   // If the app's dev server has died, the fix belongs to the agent, not the user: it wrote
   // the code that broke, and it's the only party that can repair it. So the stderr goes into
   // the agent's context as a plain user-role message and the server is restarted. Someone
-  // watching the build sees "fixing a build error", not a stack trace.
+  // watching the build sees "fixing the preview", not a stack trace.
+  //
+  // Note what this branch is and isn't. `bun run dev` is `vite` — there's no build step in dev
+  // (the template's `build` script, `tsc -b && vite build`, is never run here), and Vite
+  // transforms modules per request. A syntax error in a component does NOT kill the process;
+  // Vite keeps serving and shows its HMR overlay in the iframe. So a process exit means the
+  // server itself failed: a bad vite.config.ts, a dependency that won't load, the port taken,
+  // or OOM. The overlay class is a separate problem (future-considerations "mask build errors").
   //
   // Returns true if a repair was handed over — the caller keeps the loop running so the
   // agent actually gets a turn to act on it.
@@ -316,8 +322,10 @@ export class AgentSession {
     this.context.push({
       role: "user",
       content:
-        `The dev server running the preview exited (code ${handle.exitCode}), so the app no longer builds or runs. ` +
-        `Fix the cause in the app's source, then stop and say what you fixed. Its output was:\n\n${stderr}`,
+        `The Vite dev server serving the preview exited (code ${handle.exitCode}), so the preview is down. ` +
+        `This is the server process failing to start or stay up — look for a bad vite.config.ts, a dependency ` +
+        `that fails to load, or a file that throws when imported. Fix the cause, then stop and say what you fixed. ` +
+        `Its output was:\n\n${stderr}`,
     });
     this.log("preview_repairing", { iteration, exitCode: handle.exitCode, stderr, repairsLeft: this.repairsLeft });
 

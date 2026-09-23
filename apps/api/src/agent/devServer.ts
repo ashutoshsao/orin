@@ -97,8 +97,8 @@ export async function startDevServer(
   while (now() - started < deadlineMs) {
     // The thing we're waiting for is a process. If it's gone, no amount of polling the port
     // will help — this is the second bug: `bun run dev` was started with `background: true`
-    // and nothing ever checked it, so a syntax error in the code the agent had just written
-    // (the NORMAL failure) looked identical to a slow boot, and burned the whole budget.
+    // and nothing ever checked it, so a dev server that died at startup (bad config, missing
+    // dependency, port taken) looked identical to a slow boot and burned the whole budget.
     const dead = exited();
     if (dead) return dead;
 
