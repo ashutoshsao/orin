@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#fbf8f1" />
+    <title>Verdant Spice Co. — single-origin spices, ground fresh each week</title>
+    <meta
+      name="description"
+      content="Single-origin spices from 42 family farms, stone-ground in small batches and dated by the week. No fillers, no warehouses, no year-old powder."
+    />
+    <meta property="og:title" content="Verdant Spice Co. — spice so fresh it still smells like the farm" />
+    <meta property="og:type" content="website" />
+    <script>
+      // Apply the saved / preferred theme before first paint to avoid a flash.
+      (function () {
+        try {
+          var saved = localStorage.getItem('verdant-theme')
+          var dark =
+            saved === 'dark'
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', dark ? '#0f1a13' : '#fbf8f1')
+        } catch (e) {}
+      })()
+    </script>
+    <script type="module" crossorigin src="./assets/index-C8E0pKS7.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Cbh3xRak.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

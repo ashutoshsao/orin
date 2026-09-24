@@ -7,7 +7,6 @@ import { PreviewTrouble } from '@/components/PreviewTrouble'
 import { DotField } from '@/components/DotField'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { cn } from '@/lib/utils'
-import { MalabarApp, type MalabarPart } from './MalabarApp'
 
 // The landing page's showpiece: Orin building an app, played from a script.
 //
@@ -15,20 +14,25 @@ import { MalabarApp, type MalabarPart } from './MalabarApp'
 // AgentEvents and everything shown is derived from them by the same functions the builder uses
 // (groupFeed, activityLine, summarizeActivity, runStatus, appTrouble), so a label changed in the
 // app changes here too, and the demo can't advertise something Orin doesn't do.
-const PROMPT = 'build a landing page for my spice shop in Kerala — pepper, cardamom, turmeric'
-const ANSWER = 'Your spice shop page is live — a hero with the harvest story, a product grid for pepper, cardamom and turmeric, and a footer with shipping details.'
+// A real Orin build: the prompt, the commands (first lines) and the answer are from the transcript of
+// the spice-shop project, and the preview is that project itself — rebuilt from the transcript and
+// served from /demo-app. Two edits to it, both documented in spec 10: the reveal-hook cleanup fix,
+// and it opens in its light theme.
+const PROMPT = 'create a landing page for my spice business. SPA'
+const ANSWER = 'Your spice landing page is built and building cleanly. Fresh & organic direction — cream and moss green, a Fraunces display serif over DM Sans, lots of breathing room.'
 
-// One entry per agent round, as the real loop logs it: thinking → $ command → snapshot.
-const ROUNDS: { cmd: string; ms: number; parts?: MalabarPart[]; icons?: boolean; breaks?: boolean; repairs?: boolean; snap: string }[] = [
-  { cmd: "cat > src/App.tsx <<'EOF'", ms: 900, parts: ['nav'], snap: '3f9a2c1' },
-  { cmd: 'bun add lucide-react', ms: 1200, icons: true, snap: '8b1e04d' },
-  { cmd: "cat > src/components/Hero.tsx <<'EOF'", ms: 900, parts: ['hero', 'art'], snap: 'c27d9f3' },
-  { cmd: "cat > src/components/Products.tsx <<'EOF'", ms: 900, parts: ['c1', 'c2', 'c3'], breaks: true, snap: '1a6e8b2' },
-  { cmd: "sed -i 's/price.toFixed(2)/price.toLocaleString()/' src/components/Products.tsx", ms: 800, repairs: true, snap: '9d04e7a' },
-  { cmd: "cat > src/components/Footer.tsx <<'EOF'", ms: 750, parts: ['foot'], snap: 'e5b21c8' },
+// One entry per agent round, as the real loop logs it: thinking → $ command → snapshot. `stage` is how
+// much of the page exists once that round's files land (nav → hero → everything).
+const ROUNDS: { cmd: string; ms: number; stage?: 1 | 2 | 3; breaks?: boolean; repairs?: boolean; snap: string }[] = [
+  { cmd: 'ls -la && cat package.json && cat index.html && cat src/main.tsx', ms: 800, snap: '4b1d93e' },
+  { cmd: "mkdir -p src/components src/data src/hooks && cat > src/data/spices.ts <<'EOF'", ms: 850, snap: 'a07c5f2' },
+  { cmd: "cat > src/components/Nav.tsx <<'EOF'", ms: 850, stage: 1, snap: '5e92b0d' },
+  { cmd: "cat > src/components/Products.tsx <<'EOF'", ms: 900, breaks: true, snap: 'c3f81a6' },
+  { cmd: "sed -i \"s|import SpiceJar from './SpiceJar'|import type { CSSProperties } from 'react'…\" src/components/Products.tsx", ms: 800, repairs: true, snap: '19d4e7b' },
+  { cmd: "cat > src/App.tsx <<'EOF'", ms: 900, stage: 2, snap: '8a2f6c0' },
+  { cmd: "cat > src/index.css <<'EOF'", ms: 850, stage: 3, snap: 'd6ce84f' },
 ]
 const TRIAL_STEPS = 60
-const ALL_PARTS: MalabarPart[] = ['nav', 'hero', 'art', 'c1', 'c2', 'c3', 'foot']
 
 const live = (e: AgentEvent): AgentEvent => ({ ...e, sessionId: 'demo', ts: new Date().toISOString() })
 
@@ -55,9 +59,8 @@ export function LandingDemo() {
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [typed, setTyped] = useState<string | null>(null)   // null = composer idle
   const [pressed, setPressed] = useState(false)
-  const [parts, setParts] = useState<ReadonlySet<MalabarPart>>(new Set())
-  const [icons, setIcons] = useState(false)
-  const [previewUp, setPreviewUp] = useState(false)
+  const [stage, setStage] = useState(0)         // 0 nothing yet · 1 nav · 2 hero · 3 the whole page
+  const [showcase, setShowcase] = useState(false) // the finished page scrolls itself once
 
   // Start when it's actually seen. The fallback is insurance: an observer that never fires must
   // not leave the demo frozen (the idle window is visible either way).
@@ -67,7 +70,7 @@ export function LandingDemo() {
   useEffect(() => {
     if (!started) return
     if (reduced) {
-      setEvents(finished()); setParts(new Set(ALL_PARTS)); setIcons(true); setPreviewUp(true); setTyped(null)
+      setEvents(finished()); setStage(3); setTyped(null)
       return
     }
     let alive = true
@@ -76,7 +79,7 @@ export function LandingDemo() {
 
     async function play() {
       while (alive) {
-        setEvents([]); setParts(new Set()); setIcons(false); setPreviewUp(false); setTyped(null)
+        setEvents([]); setStage(0); setShowcase(false); setTyped(null)
         await sleep(700); if (!alive) return
 
         // 1. the prompt is typed and sent
@@ -93,11 +96,7 @@ export function LandingDemo() {
           emit({ event: 'llm_call', iteration: i + 1, status: 'toolCall' })
           emit({ event: 'tool_call', iteration: i + 1, tools: [{ name: 'bash', ok: true, command: r.cmd }] })
           await sleep(r.ms); if (!alive) return
-          if (r.parts) {
-            setPreviewUp(true)
-            for (const p of r.parts) { setParts((prev) => new Set([...prev, p])); await sleep(140) }
-          }
-          if (r.icons) setIcons(true)
+          if (r.stage) setStage(r.stage)
           if (r.breaks) { await sleep(450); emit({ event: 'preview_error' }); await sleep(750); emit({ event: 'preview_repairing' }) }
           if (r.repairs) { await sleep(150); emit({ event: 'preview_recovered' }) }
           await sleep(220); emit({ event: 'snapshot', commit: r.snap })
@@ -111,18 +110,19 @@ export function LandingDemo() {
           setEvents((prev) => prev.map((e, j) => (j === prev.length - 1 ? { ...e, content } : e)))
           await sleep(36); if (!alive) return
         }
-        await sleep(5200)
+        await sleep(900); setShowcase(true)
+        await sleep(6500)
       }
     }
     play()
     return () => { alive = false }
   }, [started, reduced])
 
-  const status = runStatus(events, { pending: false, hasPreview: previewUp, online: true })
+  const status = runStatus(events, { pending: false, hasPreview: stage > 0, online: true })
   const trouble = appTrouble(events)
   const steps = events.filter((e) => e.event === 'llm_call').length
   const snaps = events.filter((e) => e.event === 'snapshot').length
-  const view = { events, typed, pressed, parts, icons, previewUp, status, trouble, left: TRIAL_STEPS - steps, snaps }
+  const view = { events, typed, pressed, stage, showcase, started, status, trouble, left: TRIAL_STEPS - steps, snaps }
 
   return (
     <div ref={rootRef}>
@@ -137,8 +137,8 @@ export function LandingDemo() {
 }
 
 type View = {
-  events: AgentEvent[]; typed: string | null; pressed: boolean; parts: ReadonlySet<MalabarPart>; icons: boolean
-  previewUp: boolean; status: ReturnType<typeof runStatus>; trouble: ReturnType<typeof appTrouble>; left: number; snaps: number
+  events: AgentEvent[]; typed: string | null; pressed: boolean; stage: number; showcase: boolean; started: boolean
+  status: ReturnType<typeof runStatus>; trouble: ReturnType<typeof appTrouble>; left: number; snaps: number
 }
 
 // Desktop: the builder in a window, sitting on the painted tile. Scrolling it into view lifts the
@@ -196,7 +196,7 @@ function ChatHeader({ snaps }: { snaps: number }) {
     <header className="flex shrink-0 items-center justify-between gap-3 px-3 pt-4 pb-3">
       <div className="flex min-w-0 items-center gap-1">
         <span className="grid size-7 place-items-center text-muted-foreground"><ChevronLeft className="size-4" /></span>
-        <span className="truncate font-display text-[21px] leading-none tracking-[-0.01em]">Malabar spices</span>
+        <span className="truncate font-display text-[21px] leading-none tracking-[-0.01em]">Spice business</span>
       </div>
       <span className={cn('flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground transition-opacity duration-300', snaps ? 'opacity-100' : 'opacity-0')}>
         <History className="size-3.5" />{snaps} {snaps === 1 ? 'snapshot' : 'snapshots'}
@@ -304,14 +304,65 @@ function PreviewCard(v: View) {
           <span className="grid size-7 place-items-center"><ExternalLink className="size-3.5" /></span>
         </div>
       </div>
-      <div className="relative flex-1 bg-white">
-        <MalabarApp parts={v.parts} icons={v.icons} broken={v.trouble !== null} />
-        <div className={cn('absolute inset-0 bg-card transition-opacity duration-300', v.previewUp ? 'pointer-events-none opacity-0' : 'opacity-100')}>
+      <div className="relative flex-1 overflow-hidden bg-white">
+        {v.started && <RealSite stage={v.stage} broken={v.trouble !== null} showcase={v.showcase} />}
+        <div className={cn('absolute inset-0 bg-card transition-opacity duration-300', v.stage > 0 ? 'pointer-events-none opacity-0' : 'opacity-100')}>
           <DotField className="text-muted-foreground" />
           <p className="absolute inset-x-0 bottom-4 text-center font-mono text-xs text-muted-foreground">Building your app</p>
         </div>
         <AnimatePresence>{v.trouble && <PreviewTrouble key={v.trouble} state={v.trouble} />}</AnimatePresence>
       </div>
+    </div>
+  )
+}
+
+// The site Orin actually built, running for real in an iframe. It's rendered at a real screen width
+// and scaled down to the frame, so a visitor sees its true desktop layout (its true mobile layout on
+// a phone), and it appears top-down as each round's files land: nav, then hero, then the rest.
+const PAGE_WIDTH = { wide: 1280, phone: 390 }
+const REVEAL: Record<number, string> = { 0: 'inset(0 0 100% 0)', 1: 'inset(0 0 88% 0)', 2: 'inset(0 0 22% 0)', 3: 'inset(0 0 0% 0)' }
+
+function RealSite({ stage, broken, showcase }: { stage: number; broken: boolean; showcase: boolean }) {
+  const box = useRef<HTMLDivElement>(null)
+  const frame = useRef<HTMLIFrameElement>(null)
+  const [size, setSize] = useState({ w: 0, h: 0 })
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  // Once built, the page takes one slow scroll down and back — the "look what it made" beat.
+  useEffect(() => {
+    const win = frame.current?.contentWindow
+    if (!win) return
+    try {
+      if (!showcase) { win.scrollTo({ top: 0 }); return }
+      const doc = win.document.documentElement
+      win.scrollTo({ top: Math.min(doc.scrollHeight * 0.42, doc.scrollHeight - win.innerHeight), behavior: 'smooth' })
+      const back = setTimeout(() => win.scrollTo({ top: 0, behavior: 'smooth' }), 3600)
+      return () => clearTimeout(back)
+    } catch { /* not loaded yet — the page simply stays at the top */ }
+    return undefined
+  }, [showcase])
+
+  const base = size.w >= 480 ? PAGE_WIDTH.wide : PAGE_WIDTH.phone
+  const scale = size.w ? size.w / base : 1
+  return (
+    <div ref={box} className={cn('absolute inset-0 transition-[filter,opacity] duration-300', broken && 'opacity-40 blur-[2px] grayscale')}
+      style={{ clipPath: REVEAL[stage] ?? REVEAL[3], transition: 'clip-path 650ms cubic-bezier(.2,.8,.2,1), filter 300ms, opacity 300ms' }}>
+      {size.w > 0 && (
+        <iframe
+          ref={frame}
+          src="/demo-app/index.html"
+          title="A site Orin built"
+          tabIndex={-1}
+          loading="lazy"
+          className="pointer-events-none absolute top-0 left-0 origin-top-left border-0"
+          style={{ width: base, height: size.h / scale, transform: `scale(${scale})` }}
+        />
+      )}
     </div>
   )
 }
