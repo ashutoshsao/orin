@@ -115,6 +115,8 @@ export class AgentSession {
   // incident, not per session: a break at step 5 that cost two tries must not leave a break at
   // step 50 silently unfixed. Breaks are rare, so in practice this is "two tries, then ask".
   private repairsLeft = MAX_REPAIRS;
+  // The compile error already handed to the agent, so the same text isn't pushed again each round.
+  private lastReportedError?: string;
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -325,27 +327,38 @@ export class AgentSession {
     if (!(await hmr.revalidate())) {
       // Healthy again — the next breakage starts with a full allowance of its own.
       this.repairsLeft = MAX_REPAIRS;
+      this.lastReportedError = undefined;
       this.log("preview_recovered", { iteration });
       return false;
     }
     const err = hmr.error;
     if (!err) return false;
 
+    // Out of turns. Stop pulling the agent back and let the run end so the user can weigh in —
+    // a model that hasn't fixed it in two turns is usually missing intent, not effort.
     if (this.repairsLeft <= 0) {
       this.log("preview_failed", { iteration, message: err.message, id: err.id });
       return false;
     }
+    // The allowance counts the agent's TURNS on this breakage, not the number of times we've
+    // mentioned it: fixing typically takes a read and then an edit, and charging that pattern
+    // two attempts would declare failure on a repair that was going fine. So the error text is
+    // pushed once — it's still in context — and the counter ticks each round it stays broken.
+    const isNew = err.message !== this.lastReportedError;
     this.repairsLeft--;
 
-    const where = moduleUrlPath(err.id);
-    this.context.push({
-      role: "user",
-      content:
-        `The app does not compile, so the preview is showing an error instead of your app` +
-        `${where ? ` — the failing module is ${where}` : ""}. Fix it, then stop and say what you fixed. ` +
-        `Vite reported:\n\n${err.message}`,
-    });
-    this.log("preview_repairing", { iteration, id: err.id, message: err.message, repairsLeft: this.repairsLeft });
+    if (isNew) {
+      const where = moduleUrlPath(err.id);
+      this.context.push({
+        role: "user",
+        content:
+          `The app does not compile, so the preview is showing an error instead of your app` +
+          `${where ? ` — the failing module is ${where}` : ""}. Fix it, then stop and say what you fixed. ` +
+          `Vite reported:\n\n${err.message}`,
+      });
+      this.lastReportedError = err.message;
+    }
+    this.log("preview_repairing", { iteration, id: err.id, message: err.message, reported: isNew, repairsLeft: this.repairsLeft });
     return true;
   }
 

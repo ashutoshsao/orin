@@ -78,10 +78,11 @@ export function errorText(e: AgentEvent): string {
     case 'byok_key_required': return 'Add your API key on the home screen to start building.'
     case 'busy': return 'Orin is at capacity for trial sessions. Try again in a few minutes.'
     case 'project_not_found': return 'That project could not be found.'
-    // Only after the agent has had its attempts and the app still won't start. No stack
-    // trace even here — the agent saw it; the user gets something they can act on.
+    // Only after the agent has had its turns and the app is still broken. Still no stack trace —
+    // the agent saw it. This is the hand-back: it stops retrying and asks, because two turns in,
+    // what's missing is usually intent rather than effort.
     case 'preview_failed':
-      return "The app still isn't starting after a couple of attempts to fix it. Tell the agent what you were expecting and it can try again."
+      return "I couldn't get the preview working after a couple of tries. Tell me what the app should do and I'll take another run at it."
     case 'preview_unreachable':
       return `The preview didn't come up in time (last response: ${e.httpStatus}). The app may still be starting — try reloading the preview.`
     default: return String(e.message ?? e.content ?? 'Something went wrong.')
