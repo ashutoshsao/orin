@@ -46,9 +46,13 @@ export async function getJSON<T>(path: string, fallback: T): Promise<T> {
 // Mirrors commandLine() in apps/api/src/agent/agent.ts — the live event arrives already trimmed,
 // but history is raw rows, so the same rule is applied here. Keep the two in step.
 const COMMAND_LINE_MAX = 160
+// Every command already runs in the app directory, so a leading `cd` there is 32 characters of
+// noise at the head of every row. Stripped here too, for transcripts written before the rule.
+const REDUNDANT_CD = /^cd\s+\/home\/user\/react-template\s*&&\s*/
 function commandLine(command: string | undefined): string | undefined {
   if (!command) return undefined
-  const first = command.split('\n', 1)[0]!.trim()
+  const first = command.split('\n', 1)[0]!.trim().replace(REDUNDANT_CD, '')
+  if (!first) return undefined
   return first.length > COMMAND_LINE_MAX ? `${first.slice(0, COMMAND_LINE_MAX)}\u2026` : first
 }
 
