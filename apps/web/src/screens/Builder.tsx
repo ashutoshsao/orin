@@ -3,8 +3,9 @@ import { ChevronLeft, ChevronRight, CircleAlert, ExternalLink, History, Loader2,
 import { toast } from 'sonner'
 import { AnimatePresence, motion } from 'motion/react'
 import { API, clockTime, getJSON, historyToEvents, postJSON, timeAgo, type AgentEvent, type Pending, type Project, type Snap, type StoredMessage } from '@/lib/api'
-import { activityLine, errorText, eventKind, groupFeed, runStatus, summarizeActivity } from '@/lib/events'
+import { activityLine, appTrouble, errorText, eventKind, groupFeed, runStatus, summarizeActivity } from '@/lib/events'
 import { Markdown } from '@/components/markdown'
+import { PreviewTrouble } from '@/components/PreviewTrouble'
 import { Kbd } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -58,6 +59,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   const [connKey, setConnKey] = useState(0)
   const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
   const status = runStatus(events, { pending: pending !== null, hasPreview: previewUrl !== null, online: connection === 'open' })
+  const trouble = appTrouble(events)
 
   const refreshSnapshots = () => {
     getJSON<Snap[]>(`/projects/${project.id}/snapshots`, []).then(setSnapshots)
@@ -391,15 +393,21 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
 
           <div className="relative flex-1 bg-white">
             {previewUrl ? (
-              <motion.iframe
-                key={frameKey}
-                src={previewUrl}
-                title="App preview"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ duration: 0.3, ease: 'easeOut' }}
-                className="absolute inset-0 h-full w-full"
-              />
+              <>
+                <motion.iframe
+                  key={frameKey}
+                  src={previewUrl}
+                  title="App preview"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                  className="absolute inset-0 h-full w-full"
+                />
+                {/* Sits over the iframe, so Vite's error screen is never what the user reads. */}
+                <AnimatePresence>
+                  {trouble && <PreviewTrouble key={trouble} state={trouble} />}
+                </AnimatePresence>
+              </>
             ) : (
               <div className="grid h-full place-items-center bg-card">
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">

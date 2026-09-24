@@ -146,14 +146,22 @@ const RUN_ENDS = new Set(['final', 'error', 'exception', 'max_iterations_reached
 // "preview · live" whenever a URL exists: Vite keeps serving (and answering 200) while showing
 // its overlay for a broken module, so for a while the bar confidently said the opposite of what
 // the user was looking at. `preview_error` / `preview_recovered` come from the HMR watcher.
-function appBroken(events: AgentEvent[]): boolean {
-  let broken = false
+// 'fixing'  — broken, and the agent still has turns left on it
+// 'failed'  — broken, out of turns; it's the user's move now
+// null      — the app compiles
+export type AppTrouble = 'fixing' | 'failed'
+
+export function appTrouble(events: AgentEvent[]): AppTrouble | null {
+  let state: AppTrouble | null = null
   for (const e of events) {
     if (!e.sessionId && !e.local) continue
-    if (e.event === 'preview_error' || e.event === 'preview_failed') broken = true
-    else if (e.event === 'preview_recovered' || e.event === 'snapshot_restored') broken = false
+    if (e.event === 'preview_error' || e.event === 'preview_server_exited') state = 'fixing'
+    else if (e.event === 'preview_failed') state = 'failed'
+    // A dev server that came back up, a compile error cleared, or a reopened project restoring
+    // its files — all mean whatever was wrong isn't wrong any more.
+    else if (e.event === 'preview_recovered' || e.event === 'preview_ready' || e.event === 'snapshot_restored') state = null
   }
-  return broken
+  return state
 }
 
 export type RunStatus = { label: string; active: boolean; building: boolean }
@@ -176,7 +184,7 @@ export function runStatus(
     else if (RUN_ENDS.has(e.event)) { lastEnd = i; endedBy = e.event }
     else if (e.event === 'llm_call' && typeof e.iteration === 'number') step = e.iteration
   })
-  const broken = appBroken(events)
+  const broken = appTrouble(events) !== null
   if (lastStart > lastEnd) {
     // Mid-run with a broken app: the agent is about to be handed the error, so say what's
     // happening rather than a step count the user can't act on.
