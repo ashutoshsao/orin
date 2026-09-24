@@ -6,11 +6,13 @@ import { API, clockTime, getJSON, historyToEvents, postJSON, timeAgo, type Agent
 import { activityLine, appTrouble, errorText, eventKind, groupFeed, runStatus, summarizeActivity } from '@/lib/events'
 import { Markdown } from '@/components/markdown'
 import { PreviewTrouble } from '@/components/PreviewTrouble'
+import { BuilderSheet } from '@/components/BuilderSheet'
 import { Kbd } from '@/components/brand'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { cn } from '@/lib/utils'
+import { useMediaQuery } from '@/lib/useMediaQuery'
 import { stepsLeftLabel, type Access } from '@/lib/access'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -60,6 +62,8 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   const effectivePrompt = reloadKey === 0 ? firstPrompt : undefined
   const status = runStatus(events, { pending: pending !== null, hasPreview: previewUrl !== null, online: connection === 'open' })
   const trouble = appTrouble(events)
+  // Matches Tailwind's `md`, which is where the two-column layout starts being usable.
+  const isDesktop = useMediaQuery('(min-width: 768px)')
 
   const refreshSnapshots = () => {
     getJSON<Snap[]>(`/projects/${project.id}/snapshots`, []).then(setSnapshots)
@@ -210,169 +214,175 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   const feed = groupFeed(events)
   const lastMessageAt = feed.findLastIndex((item) => item.type === 'message')
 
-  return (
-    <div className="grid h-dvh grid-cols-1 bg-background md:grid-cols-[440px_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col md:border-r">
-        <header className="flex items-center justify-between gap-3 px-4 pt-5 pb-4">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onBack} aria-label="Back to projects">
-              <ChevronLeft />
-            </Button>
-            <span className="truncate font-display text-[22px] leading-none tracking-[-0.01em]">{project.name}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            {snapshots.length > 0 && (
-              <button
-                onClick={() => setShowHistory((v) => !v)}
-                aria-expanded={showHistory}
-                className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground aria-expanded:text-foreground"
-              >
-                <History className="size-3.5" />
-                {snapshots.length} {snapshots.length === 1 ? 'snapshot' : 'snapshots'}
-              </button>
-            )}
-            <ThemeToggle />
-          </div>
-        </header>
-
-        <AnimatePresence initial={false}>
-          {showHistory && (
-            <motion.div
-              key="history"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2, ease: 'easeOut' }}
-              className="overflow-hidden border-y bg-card/60"
-            >
-              <div className="px-6 py-3">
-                <p className="text-xs text-muted-foreground">Rewind to an earlier point. Work after it is discarded.</p>
-                <ul className="mt-2.5 space-y-1">
-                  {snapshots.map((snap, i) => {
-                    const current = i === snapshots.length - 1
-                    return (
-                      <li key={snap.id} className="flex items-center justify-between gap-3 text-xs">
-                        <span className="truncate text-muted-foreground">
-                          <span className="font-mono">{snap.commitHash.slice(0, 7)}</span>
-                          <span className="mx-1.5">·</span>
-                          {timeAgo(snap.createdAt)}
-                        </span>
-                        {current
-                          ? <span className="shrink-0 text-muted-foreground">current</span>
-                          : <Button variant="ghost" size="xs" onClick={() => setConfirmSnap(snap)}>Rewind</Button>}
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-[22px] px-6 pt-2.5 pb-6">
-            {events.length === 0 && (
-              <p className="py-8 text-center text-sm text-muted-foreground">Waking up the environment…</p>
-            )}
-            {feed.map((item, i, all) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.18, ease: 'easeOut' }}
-              >
-                {item.type === 'message' ? (
-                  <FeedRow
-                    event={item.event}
-                    onAnswer={submitAnswer}
-                    // Offer Continue only on the latest message, and only when nothing's running.
-                    onContinue={i === lastMessageAt && !status.building && sessionId ? () => send('continue') : undefined}
-                  />
-                )
-                  : item.type === 'divider' ? <SessionDivider ts={item.event.ts} />
-                  : <ActivityGroup events={item.events} working={i === all.length - 1 && status.building} />}
-              </motion.div>
-            ))}
-            {/* The preview bar carries the status on desktop; on mobile the preview is hidden. */}
-            {status.active && (
-              <p className="flex items-center gap-2 pl-11 text-xs text-muted-foreground md:hidden">
-                <Loader2 className="size-3 animate-spin" /> {status.label}
-              </p>
-            )}
-            <div ref={feedEndRef} />
-          </div>
-        </ScrollArea>
-
-        {connection !== 'open' && (
-          <div className="flex items-center justify-between gap-2 border-t bg-muted/40 px-6 py-2 text-xs">
-            <span className="flex items-center gap-1.5 text-muted-foreground">
-              <PlugZap className="size-3.5" />
-              {connection === 'reconnecting'
-                ? 'Reconnecting…'
-                : closedReason === 'other_project'
-                  ? 'Paused — you opened another project'
-                  : closedReason === 'rewind'
-                    ? 'Rewound elsewhere — reopen to continue'
-                    : 'Disconnected'}
-            </span>
-            {connection === 'closed' && (
-              <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; if (closedReason) reopen(); else reconnect() }}>
-                {closedReason ? 'Reopen' : 'Reconnect'}
+  // Panes are element trees, not nested components: a nested function component would be a new
+  // type on every render and remount the whole feed. The chat is built once and placed either
+  // in the desktop column or in the mobile sheet, so its scroll position and refs survive.
+  // Split in two because the mobile sheet reverses them: at its peek height only the TOP of
+  // the sheet is on screen, so the composer — the one thing a phone user needs — has to sit
+  // there, with the conversation above it once the sheet is dragged up.
+  const chatFeed = (
+    <>
+          <header className="flex items-center justify-between gap-3 px-4 pt-5 pb-4">
+            <div className="flex min-w-0 items-center gap-1.5">
+              <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onBack} aria-label="Back to projects">
+                <ChevronLeft />
               </Button>
-            )}
-          </div>
-        )}
-
-        <div className="px-5 pt-3 pb-5">
-          {pending ? (
-            <div className="space-y-3 rounded-2xl border bg-card p-4">
-              <p className="text-[15px] font-medium">{pending.question}</p>
-              {pending.options.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {pending.options.map((opt) => (
-                    <Button key={opt} variant="outline" size="sm" className="rounded-lg" onClick={() => submitAnswer(opt)}>{opt}</Button>
-                  ))}
-                </div>
+              <span className="truncate font-display text-[22px] leading-none tracking-[-0.01em]">{project.name}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              {snapshots.length > 0 && (
+                <button
+                  onClick={() => setShowHistory((v) => !v)}
+                  aria-expanded={showHistory}
+                  className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground aria-expanded:text-foreground"
+                >
+                  <History className="size-3.5" />
+                  {snapshots.length} {snapshots.length === 1 ? 'snapshot' : 'snapshots'}
+                </button>
               )}
-              <form onSubmit={(ev) => { ev.preventDefault(); submitAnswer(answer) }} className="flex items-center gap-2.5">
+              <ThemeToggle />
+            </div>
+          </header>
+
+          <AnimatePresence initial={false}>
+            {showHistory && (
+              <motion.div
+                key="history"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.2, ease: 'easeOut' }}
+                className="overflow-hidden border-y bg-card/60"
+              >
+                <div className="px-6 py-3">
+                  <p className="text-xs text-muted-foreground">Rewind to an earlier point. Work after it is discarded.</p>
+                  <ul className="mt-2.5 space-y-1">
+                    {snapshots.map((snap, i) => {
+                      const current = i === snapshots.length - 1
+                      return (
+                        <li key={snap.id} className="flex items-center justify-between gap-3 text-xs">
+                          <span className="truncate text-muted-foreground">
+                            <span className="font-mono">{snap.commitHash.slice(0, 7)}</span>
+                            <span className="mx-1.5">·</span>
+                            {timeAgo(snap.createdAt)}
+                          </span>
+                          {current
+                            ? <span className="shrink-0 text-muted-foreground">current</span>
+                            : <Button variant="ghost" size="xs" onClick={() => setConfirmSnap(snap)}>Rewind</Button>}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="flex flex-col gap-[22px] px-6 pt-2.5 pb-6">
+              {events.length === 0 && (
+                <p className="py-8 text-center text-sm text-muted-foreground">Waking up the environment…</p>
+              )}
+              {feed.map((item, i, all) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  {item.type === 'message' ? (
+                    <FeedRow
+                      event={item.event}
+                      onAnswer={submitAnswer}
+                      // Offer Continue only on the latest message, and only when nothing's running.
+                      onContinue={i === lastMessageAt && !status.building && sessionId ? () => send('continue') : undefined}
+                    />
+                  )
+                    : item.type === 'divider' ? <SessionDivider ts={item.event.ts} />
+                    : <ActivityGroup events={item.events} working={i === all.length - 1 && status.building} />}
+                </motion.div>
+              ))}
+              <div ref={feedEndRef} />
+            </div>
+          </ScrollArea>
+    </>
+  )
+
+  const chatComposer = (
+    <>
+
+          {connection !== 'open' && (
+            <div className="flex items-center justify-between gap-2 border-t bg-muted/40 px-6 py-2 text-xs">
+              <span className="flex items-center gap-1.5 text-muted-foreground">
+                <PlugZap className="size-3.5" />
+                {connection === 'reconnecting'
+                  ? 'Reconnecting…'
+                  : closedReason === 'other_project'
+                    ? 'Paused — you opened another project'
+                    : closedReason === 'rewind'
+                      ? 'Rewound elsewhere — reopen to continue'
+                      : 'Disconnected'}
+              </span>
+              {connection === 'closed' && (
+                <Button variant="ghost" size="xs" onClick={() => { retriesRef.current = 0; if (closedReason) reopen(); else reconnect() }}>
+                  {closedReason ? 'Reopen' : 'Reconnect'}
+                </Button>
+              )}
+            </div>
+          )}
+
+          <div className="px-5 pt-3 pb-5">
+            {pending ? (
+              <div className="space-y-3 rounded-2xl border bg-card p-4">
+                <p className="text-[15px] font-medium">{pending.question}</p>
+                {pending.options.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pending.options.map((opt) => (
+                      <Button key={opt} variant="outline" size="sm" className="rounded-lg" onClick={() => submitAnswer(opt)}>{opt}</Button>
+                    ))}
+                  </div>
+                )}
+                <form onSubmit={(ev) => { ev.preventDefault(); submitAnswer(answer) }} className="flex items-center gap-2.5">
+                  <input
+                    value={answer}
+                    onChange={(ev) => setAnswer(ev.target.value)}
+                    placeholder="Or say it in your own words…"
+                    autoFocus
+                    className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
+                  />
+                  <Kbd>↵</Kbd>
+                  <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!answer.trim()}>Send</Button>
+                </form>
+              </div>
+            ) : (
+              <form
+                onSubmit={sendFollowUp}
+                className="flex items-center gap-2.5 rounded-2xl border bg-card py-2 pr-2 pl-4 shadow-[0_10px_28px_-18px_rgb(60_40_20/0.3)] transition-colors focus-within:border-ring dark:shadow-none"
+              >
                 <input
-                  value={answer}
-                  onChange={(ev) => setAnswer(ev.target.value)}
-                  placeholder="Or say it in your own words…"
-                  autoFocus
-                  className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
+                  value={followUp}
+                  onChange={(e) => setFollowUp(e.target.value)}
+                  placeholder={outOfSteps ? 'No steps left in this trial' : sessionId ? 'Ask for a change…' : 'Connecting…'}
+                  disabled={!sessionId || outOfSteps}
+                  className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
                 />
                 <Kbd>↵</Kbd>
-                <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!answer.trim()}>Send</Button>
+                <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!followUp.trim() || !sessionId || outOfSteps}>
+                  Send
+                </Button>
               </form>
-            </div>
-          ) : (
-            <form
-              onSubmit={sendFollowUp}
-              className="flex items-center gap-2.5 rounded-2xl border bg-card py-2 pr-2 pl-4 shadow-[0_10px_28px_-18px_rgb(60_40_20/0.3)] transition-colors focus-within:border-ring dark:shadow-none"
-            >
-              <input
-                value={followUp}
-                onChange={(e) => setFollowUp(e.target.value)}
-                placeholder={outOfSteps ? 'No steps left in this trial' : sessionId ? 'Ask for a change…' : 'Connecting…'}
-                disabled={!sessionId || outOfSteps}
-                className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
-              />
-              <Kbd>↵</Kbd>
-              <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!followUp.trim() || !sessionId || outOfSteps}>
-                Send
-              </Button>
-            </form>
-          )}
-          {stepsLabel && (
-            <p className="mt-2 px-1 font-mono text-[11px] text-muted-foreground">
-              {outOfSteps ? 'Trial used up · your work is saved' : `Trial · ${stepsLabel}`}
-            </p>
-          )}
-        </div>
-      </aside>
+            )}
+            {stepsLabel && (
+              <p className="mt-2 px-1 font-mono text-[11px] text-muted-foreground">
+                {outOfSteps ? 'Trial used up · your work is saved' : `Trial · ${stepsLabel}`}
+              </p>
+            )}
+          </div>
+    </>
+  )
 
-      <main className="hidden min-w-0 p-5 md:flex">
+  const previewPane = (
+    <>
         {/* The preview sits like a sheet on the desk; the generated app keeps its own white. */}
         <div className="flex flex-1 flex-col overflow-hidden rounded-[18px] border bg-card shadow-[0_1px_0_rgb(28_24_20/0.04),0_30px_60px_-30px_rgb(60_40_20/0.35)] dark:shadow-[0_24px_48px_-24px_rgb(0_0_0/0.8)]">
           <div className="flex h-[46px] shrink-0 items-center justify-between border-b px-4">
@@ -417,8 +427,10 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
             )}
           </div>
         </div>
-      </main>
+    </>
+  )
 
+  const rewindDialog = (
       <AlertDialog open={confirmSnap !== null} onOpenChange={(open) => !open && setConfirmSnap(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -434,9 +446,30 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+  )
+
+  // Phone: the preview IS the screen, with the chat as a drag-up sheet. Below `md` the preview
+  // used to be hidden entirely — and a guest link opened on a phone is the recruiter path, so
+  // watching the app get built is the whole point of being there (spec 9).
+  if (!isDesktop) {
+    return (
+      <div className="flex h-dvh flex-col bg-background">
+        <main className="flex min-h-0 flex-1 p-3">{previewPane}</main>
+        <BuilderSheet status={status} composer={chatComposer}>{chatFeed}</BuilderSheet>
+        {rewindDialog}
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid h-dvh grid-cols-1 bg-background md:grid-cols-[440px_minmax(0,1fr)]">
+      <aside className="flex min-h-0 flex-col md:border-r">{chatFeed}{chatComposer}</aside>
+      <main className="hidden min-w-0 p-5 md:flex">{previewPane}</main>
+      {rewindDialog}
     </div>
   )
 }
+
 
 // A row with the chat gutter's clock on the left. Conversation rows get a time;
 // telemetry sits under the same column without one.
