@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MotionValue } from 'motion/react'
-import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react'
+import { motion, useInView, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react'
 import { Wordmark, GithubMark } from '@/components/brand'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { DotField } from '@/components/DotField'
@@ -220,56 +219,113 @@ function Different() {
   )
 }
 
-// For the engineers reading. The section's job is to explain what happens during ONE build round,
-// in order — so the animation is that order. The diagram pins, and scrolling is time: each step draws
-// one hop from its source to its target, lights the box it reaches, and captions what just happened.
-// (An earlier version looped packets along every wire at once: motion with no meaning.)
-const VB = { w: 900, h: 380 }
+// For the engineers reading: one build round as a branch bloom. The prompt grows a trunk from the
+// browser to the API; the API then blooms — four branches at once, to the model, the sandbox,
+// Postgres and R2, because a round really does touch all four — twigs sprout, each box it reaches
+// ripples, and the preview arcs from the sandbox straight back to the browser. Then it recedes and
+// blooms again. It plays on its own; the faint wiring underneath means it reads with no motion at all.
 type NodeKey = 'browser' | 'api' | 'llm' | 'sandbox' | 'pg' | 'r2'
-const NODES: Record<NodeKey, { x: number; y: number; t: string; s: string }> = {
-  browser: { x: 120, y: 190, t: 'Your browser', s: 'React · Vercel' },
-  api: { x: 460, y: 190, t: 'Orin API', s: 'Bun · Elysia · GKE' },
-  llm: { x: 460, y: 62, t: 'The model', s: '4 providers, one interface' },
-  sandbox: { x: 780, y: 110, t: 'E2B sandbox', s: 'Vite dev server' },
-  pg: { x: 460, y: 318, t: 'Postgres', s: 'saved every round' },
-  r2: { x: 780, y: 290, t: 'Redis → R2', s: 'git bundle per round' },
+const NODE_TEXT: Record<NodeKey, { t: string; s: string }> = {
+  browser: { t: 'Your browser', s: 'React · Vercel' },
+  api: { t: 'Orin API', s: 'Bun · Elysia · GKE' },
+  llm: { t: 'The model', s: '4 providers, one interface' },
+  sandbox: { t: 'E2B sandbox', s: 'Vite dev server' },
+  pg: { t: 'Postgres', s: 'saved every round' },
+  r2: { t: 'Redis → R2', s: 'git bundle per round' },
 }
-// In request order. Each path runs source → target, so it draws in the direction the data moves.
-const HOPS: { d: string; to: NodeKey; label: string; lx: number; ly: number; anchor?: 'start' | 'middle'; title: string; body: string }[] = [
-  { d: 'M 208 190 L 372 190', to: 'api', label: 'server-sent events', lx: 290, ly: 180, anchor: 'middle',
-    title: 'You ask', body: 'Your prompt reaches the API. Everything after this streams back to the page as server-sent events.' },
-  { d: 'M 460 166 L 460 86', to: 'llm', label: 'model calls', lx: 470, ly: 130,
-    title: 'It thinks', body: 'The model reads the conversation so far and answers with the next tool calls.' },
-  { d: 'M 548 176 L 692 124', to: 'sandbox', label: 'bash_tool', lx: 612, ly: 138, anchor: 'middle',
-    title: 'It runs', body: 'Each call runs as a shell command in the project’s own E2B sandbox: writing files, installing packages.' },
-  { d: 'M 692 96 Q 430 -118 150 166', to: 'browser', label: 'live preview', lx: 300, ly: 30, anchor: 'middle',
-    title: 'You watch', body: 'The preview is the sandbox’s own Vite dev server, loaded straight into the page — not proxied through the API.' },
-  { d: 'M 460 214 L 460 294', to: 'pg', label: 'every round', lx: 470, ly: 258,
-    title: 'It saves', body: 'When the round ends, the conversation is written to Postgres — never halfway through one.' },
-  { d: 'M 548 204 L 692 276', to: 'r2', label: 'snapshot queue', lx: 612, ly: 256, anchor: 'middle',
-    title: 'It snapshots', body: 'The files are committed, bundled and queued for R2, so any round can be rewound to later.' },
-]
-const N = HOPS.length
-// Within its slice of the scroll, a hop draws over the first 60% and rests for the remainder.
-const drawn = (i: number) => [i / N + 0.012, i / N + 0.6 / N] as const
+type Layout = {
+  w: number; h: number; nodeW: string
+  at: Record<NodeKey, [number, number]>
+  trunk: string
+  branches: string[]                                   // all four bloom at the same instant
+  twigs: { d: string; tip: [number, number] }[]
+  arc: string                                          // sandbox → browser: the live preview
+  labels: { x: number; y: number; t: string; anchor?: 'start' | 'middle' | 'end' }[]
+}
+const WIDE: Layout = {
+  w: 900, h: 380, nodeW: '19%',
+  at: { browser: [120, 190], api: [460, 190], llm: [460, 62], sandbox: [780, 110], pg: [460, 318], r2: [780, 290] },
+  trunk: 'M 208 190 C 262 174, 318 206, 372 190',
+  branches: [
+    'M 460 166 C 446 140, 474 112, 460 86',
+    'M 548 178 C 604 178, 628 122, 692 118',
+    'M 460 214 C 474 240, 446 268, 460 294',
+    'M 548 202 C 604 202, 628 280, 692 282',
+  ],
+  twigs: [
+    { d: 'M 457 128 C 446 120, 438 112, 428 108', tip: [428, 108] },
+    { d: 'M 612 156 C 618 146, 626 142, 638 142', tip: [638, 142] },
+    { d: 'M 463 254 C 474 262, 482 268, 494 272', tip: [494, 272] },
+    { d: 'M 612 226 C 620 238, 628 242, 640 242', tip: [640, 242] },
+    { d: 'M 290 190 C 296 204, 300 210, 308 214', tip: [308, 214] },
+  ],
+  arc: 'M 692 96 Q 430 -118 150 166',
+  labels: [
+    { x: 290, y: 176, t: 'server-sent events', anchor: 'middle' },
+    { x: 474, y: 128, t: 'model calls' },
+    { x: 566, y: 110, t: 'bash_tool' },
+    { x: 300, y: 30, t: 'live preview', anchor: 'middle' },
+    { x: 474, y: 258, t: 'every round' },
+    { x: 578, y: 300, t: 'snapshot queue' },
+  ],
+}
+// Phones: the same tree standing up — browser on top, the API below it, four branches fanning down.
+const TALL: Layout = {
+  w: 360, h: 600, nodeW: '44%',
+  at: { browser: [180, 44], api: [180, 196], llm: [88, 350], sandbox: [272, 350], pg: [88, 520], r2: [272, 520] },
+  trunk: 'M 180 72 C 168 110, 192 140, 180 168',
+  branches: [
+    'M 150 224 C 130 260, 96 280, 88 322',
+    'M 210 224 C 230 260, 264 280, 272 322',
+    'M 164 224 C 150 330, 70 420, 80 492',
+    'M 196 224 C 210 330, 290 420, 280 492',
+  ],
+  twigs: [
+    { d: 'M 120 262 C 108 258, 100 250, 94 240', tip: [94, 240] },
+    { d: 'M 240 262 C 252 258, 260 250, 266 240', tip: [266, 240] },
+    { d: 'M 176 120 C 190 116, 198 110, 204 102', tip: [204, 102] },
+  ],
+  arc: 'M 330 330 C 372 220, 356 60, 270 44',
+  labels: [
+    { x: 196, y: 128, t: 'events' },
+    { x: 356, y: 200, t: 'preview', anchor: 'end' },
+  ],
+}
+
+// One loop, in fractions of it. Everything shares these, which is what makes the bloom synchronous.
+const LOOP = 6.5
+const T = { origin: 0.04, api: 0.16, bloom: 0.36, twig: 0.42, preview: 0.54, hold: 0.8, gone: 0.92 }
+const grow = (start: number, end: number) => ({
+  pathLength: [0, 0, 1, 1, 0, 0],
+  opacity: [0, 1, 1, 1, 0, 0],
+  transition: { duration: LOOP, times: [0, start, end, T.hold, T.gone, 1], repeat: Infinity, ease: 'easeInOut' as const },
+})
+const ARRIVE: Record<NodeKey, number> = { browser: T.origin, api: T.api, llm: T.bloom, sandbox: T.bloom, pg: T.bloom, r2: T.bloom }
 
 function HowItsBuilt() {
-  const reduced = useReducedMotion()
+  const reduced = !!useReducedMotion()
   return (
     // `dark` scopes the dark palette to this band, so it reads as a change of room in either theme.
     <section id="built" className="dark scroll-mt-16 bg-background text-foreground">
-      <div className="mx-auto max-w-[1360px] px-4 pt-20 md:px-10 md:pt-28">
+      <div className="mx-auto max-w-[1360px] px-4 py-20 md:px-10 md:py-28">
         <h2 className="max-w-[18ch] font-wide text-[clamp(2rem,4.2vw,3.6rem)] leading-[1.02] font-[720] tracking-[-0.02em] text-balance [font-stretch:112%]">
           How it's <span className="font-display font-normal tracking-[-0.01em] italic [font-stretch:100%]">built</span>
         </h2>
         <p className="mt-5 max-w-[44rem] text-lg leading-relaxed text-muted-foreground">
-          A learning project, written part by part: the agent loop, the sandbox, the event stream, persistence and the deploy are all hand-built rather than taken from a framework. Here is one build round, hop by hop.
+          A learning project, written part by part: the agent loop, the sandbox, the event stream, persistence and the deploy are all hand-built rather than taken from a framework. Here is one build round.
         </p>
-      </div>
-      <div className="hidden md:block">{reduced ? <StillTrace /> : <ScrollTrace />}</div>
-      <div className="md:hidden"><PhoneTrace reduced={!!reduced} /></div>
-      <div className="mx-auto max-w-[1360px] px-4 pb-20 md:px-10 md:pb-28">
-        <ul className="flex flex-wrap gap-2">
+        <div className="mt-14 hidden md:block"><Bloom layout={WIDE} still={reduced} /></div>
+        <div className="mx-auto mt-10 max-w-[400px] md:hidden"><Bloom layout={TALL} still={reduced} /></div>
+        <ol className="mt-14 grid gap-x-10 gap-y-7 sm:grid-cols-2 lg:grid-cols-3">
+          {ROUND.map(([title, body], i) => (
+            <li key={title}>
+              <p className="font-mono text-xs text-muted-foreground">{i + 1}</p>
+              <p className="mt-1 font-semibold">{title}</p>
+              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{body}</p>
+            </li>
+          ))}
+        </ol>
+        <ul className="mt-14 flex flex-wrap gap-2">
           {STACK.map((t) => <li key={t} className="rounded-full border px-3 py-1 font-mono text-xs text-muted-foreground">{t}</li>)}
         </ul>
         <a href={SOURCE} className="mt-10 inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-card">
@@ -280,122 +336,66 @@ function HowItsBuilt() {
   )
 }
 
+const ROUND: [string, string][] = [
+  ['You ask', 'Your prompt reaches the API. Everything after this streams back to the page as server-sent events.'],
+  ['It thinks', 'The model reads the conversation so far and answers with the next tool calls.'],
+  ['It runs', 'Each call runs as a shell command in the project’s own E2B sandbox: writing files, installing packages.'],
+  ['You watch', 'The preview is the sandbox’s own Vite dev server, loaded straight into the page — not through the API.'],
+  ['It saves', 'When the round ends, the conversation is written to Postgres — never halfway through one.'],
+  ['It snapshots', 'The files are committed, bundled and queued for R2, so any round can be rewound to later.'],
+]
 const STACK = ['Bun', 'Elysia', 'React', 'Tailwind', 'Drizzle', 'Postgres', 'Better Auth', 'E2B', 'Redis', 'Cloudflare R2', 'GKE', 'Vercel']
 
-function ScrollTrace() {
-  const track = useRef<HTMLDivElement>(null)
-  const { scrollYProgress } = useScroll({ target: track, offset: ['start start', 'end end'] })
-  const p = useSpring(scrollYProgress, { stiffness: 120, damping: 30, mass: 0.4 })
-  const [step, setStep] = useState(0)
-  useMotionValueEvent(p, 'change', (v) => setStep(Math.min(N - 1, Math.max(0, Math.floor(v * N)))))
-  return (
-    <div ref={track} className="relative h-[360vh]">
-      <div className="sticky top-16 flex h-[calc(100svh-4rem)] flex-col justify-center gap-8 px-10">
-        <Diagram p={p} />
-        <Caption step={step} />
-      </div>
-    </div>
-  )
-}
+function Bloom({ layout: L, still }: { layout: Layout; still: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  // Only loops while on screen; under Reduce Motion it's the fully bloomed tree, standing still.
+  const inView = useInView(ref, { amount: 0.25 })
+  const play = inView && !still
+  const all = [L.trunk, ...L.branches, ...L.twigs.map((t) => t.d), L.arc]
+  const drawn = (d: string, start: number, end: number, width = 1.8) =>
+    play
+      ? <motion.path key={d} d={d} fill="none" className="stroke-primary" strokeWidth={width} strokeLinecap="round" initial={{ pathLength: 0, opacity: 0 }} animate={grow(start, end)} />
+      : <path key={d} d={d} fill="none" className="stroke-primary" strokeWidth={width} strokeLinecap="round" opacity={still ? 0.85 : 0} />
 
-// Reduce Motion: the finished trace, and all six steps written out.
-function StillTrace() {
-  const done = useMotionValue(1)
   return (
-    <div className="px-10 py-12">
-      <Diagram p={done} />
-      <ol className="mx-auto mt-10 grid max-w-[1100px] grid-cols-3 gap-x-10 gap-y-6">
-        {HOPS.map((h, i) => (
-          <li key={h.title}><p className="font-mono text-xs text-muted-foreground">{i + 1}</p><p className="mt-1 font-semibold">{h.title}</p><p className="mt-1 text-sm leading-relaxed text-muted-foreground">{h.body}</p></li>
-        ))}
-      </ol>
-    </div>
-  )
-}
-
-function Diagram({ p }: { p: MotionValue<number> }) {
-  return (
-    <div className="relative mx-auto aspect-[900/380] w-full max-w-[1100px]">
-      <svg viewBox={`0 0 ${VB.w} ${VB.h}`} className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
-        {HOPS.map((h) => (
-          <g key={h.d}>
-            <path d={h.d} fill="none" className="stroke-border" strokeWidth="1.2" strokeDasharray="3 5" />
-            <text x={h.lx} y={h.ly} textAnchor={h.anchor ?? 'start'} className="fill-muted-foreground font-mono text-[10.5px]">{h.label}</text>
-          </g>
-        ))}
-        {HOPS.map((h, i) => <Hop key={h.d} d={h.d} p={p} i={i} />)}
+    <div ref={ref} className="relative mx-auto w-full max-w-[1100px]" style={{ aspectRatio: `${L.w} / ${L.h}` }}>
+      <svg viewBox={`0 0 ${L.w} ${L.h}`} className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
+        {/* the wiring, always there */}
+        {all.map((d) => <path key={`base-${d}`} d={d} fill="none" className="stroke-border" strokeWidth="1.2" strokeDasharray="3 5" />)}
+        {L.labels.map((l) => <text key={l.t} x={l.x} y={l.y} textAnchor={l.anchor ?? 'start'} className="fill-muted-foreground font-mono text-[10.5px]">{l.t}</text>)}
+        {/* the bloom: trunk, then four branches at once, then twigs, then the preview arcing home */}
+        {drawn(L.trunk, T.origin, T.api, 2.2)}
+        {L.branches.map((d) => drawn(d, T.api, T.bloom))}
+        {L.twigs.map((t) => drawn(t.d, T.bloom - 0.06, T.twig, 1.3))}
+        {drawn(L.arc, T.bloom + 0.02, T.preview)}
+        {L.twigs.map((t) => play
+          ? <motion.circle key={`tip-${t.d}`} cx={t.tip[0]} cy={t.tip[1]} r="3" className="fill-primary" initial={{ scale: 0 }}
+              animate={{ scale: [0, 0, 1, 1, 0, 0], transition: { duration: LOOP, times: [0, T.twig - 0.02, T.twig + 0.03, T.hold, T.gone, 1], repeat: Infinity } }} />
+          : <circle key={`tip-${t.d}`} cx={t.tip[0]} cy={t.tip[1]} r="3" className="fill-primary" opacity={still ? 0.85 : 0} />)}
       </svg>
-      {(Object.keys(NODES) as NodeKey[]).map((k) => {
-        // The browser is where the round starts, so it's lit from the beginning.
-        const litAt = k === 'browser' ? -1 : drawn(HOPS.findIndex((h) => h.to === k))[1]
-        return <NodeBox key={k} n={NODES[k]} p={p} litAt={litAt} />
-      })}
+      {(Object.keys(L.at) as NodeKey[]).map((k) => (
+        <BloomNode key={k} k={k} x={(L.at[k][0] / L.w) * 100} y={(L.at[k][1] / L.h) * 100} width={L.nodeW} play={play} still={still} />
+      ))}
     </div>
   )
 }
 
-function Hop({ d, p, i }: { d: string; p: MotionValue<number>; i: number }) {
-  const [from, to] = drawn(i)
-  const length = useTransform(p, [from, to], [0, 1], { clamp: true })
-  return <motion.path d={d} fill="none" className="stroke-primary" strokeWidth="1.8" strokeLinecap="round" style={{ pathLength: length }} />
-}
-
-function NodeBox({ n, p, litAt }: { n: { x: number; y: number; t: string; s: string }; p: MotionValue<number>; litAt: number }) {
-  const lit = useTransform(p, [litAt - 0.01, litAt + 0.02], [0, 1], { clamp: true })
+function BloomNode({ k, x, y, width, play, still }: { k: NodeKey; x: number; y: number; width: string; play: boolean; still: boolean }) {
+  const a = ARRIVE[k]
+  const lit = { opacity: [0, 0, 1, 1, 0, 0], transition: { duration: LOOP, times: [0, a, a + 0.03, T.hold, T.gone, 1], repeat: Infinity } }
+  // A ripple as the branch arrives — and for the browser, a second one when the preview lands.
+  const ripple = (at: number) => ({ scale: [1, 1, 1.14, 1.14], opacity: [0, 0.9, 0, 0], transition: { duration: LOOP, times: [0, at, Math.min(at + 0.12, 0.99), 1], repeat: Infinity, ease: 'easeOut' as const } })
   return (
-    <div className="absolute w-[19%] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card px-3.5 py-3" style={{ left: `${(n.x / VB.w) * 100}%`, top: `${(n.y / VB.h) * 100}%` }}>
-      <motion.span style={{ opacity: lit }} className="pointer-events-none absolute -inset-px rounded-xl border border-primary shadow-[0_0_28px_-8px] shadow-primary/60" />
-      <p className="relative text-sm font-semibold">{n.t}</p>
-      <p className="relative mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{n.s}</p>
+    <div className="absolute -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card px-3 py-2.5 md:px-3.5 md:py-3" style={{ left: `${x}%`, top: `${y}%`, width }}>
+      {play && <>
+        <motion.span initial={{ opacity: 0 }} animate={lit} className="pointer-events-none absolute -inset-px rounded-xl border border-primary shadow-[0_0_28px_-8px] shadow-primary/60" />
+        <motion.span initial={{ opacity: 0 }} animate={ripple(a)} className="pointer-events-none absolute -inset-px rounded-xl border border-primary" />
+        {k === 'browser' && <motion.span initial={{ opacity: 0 }} animate={ripple(T.preview)} className="pointer-events-none absolute -inset-px rounded-xl border border-primary" />}
+      </>}
+      {still && <span className="pointer-events-none absolute -inset-px rounded-xl border border-primary/70" />}
+      <p className="relative text-[13px] font-semibold md:text-sm">{NODE_TEXT[k].t}</p>
+      <p className="relative mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground md:text-[11px]">{NODE_TEXT[k].s}</p>
     </div>
-  )
-}
-
-function Caption({ step }: { step: number }) {
-  const h = HOPS[step]
-  return (
-    <div className="mx-auto flex w-full max-w-[1100px] items-start justify-between gap-10">
-      <div className="min-h-[7.5rem]">
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div key={step} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22, ease: 'easeOut' }}>
-            <p className="font-mono text-xs text-muted-foreground">{step + 1} / {N}</p>
-            <h3 className="mt-2 text-3xl font-semibold tracking-[-0.01em]">{h.title}</h3>
-            <p className="mt-2 max-w-[56ch] leading-relaxed text-muted-foreground">{h.body}</p>
-          </motion.div>
-        </AnimatePresence>
-      </div>
-      <ol className="flex shrink-0 gap-1.5 pt-1" aria-hidden="true">
-        {HOPS.map((x, i) => <li key={x.title} className={cn('h-1 w-8 rounded-full transition-colors duration-300', i <= step ? 'bg-primary' : 'bg-border')} />)}
-      </ol>
-    </div>
-  )
-}
-
-// Phones: the same six steps as a vertical trace. The rail draws down as you scroll, and each step
-// brightens as the rail reaches it — the text is always there, just quieter before its turn.
-function PhoneTrace({ reduced }: { reduced: boolean }) {
-  const ref = useRef<HTMLOListElement>(null)
-  const { scrollYProgress } = useScroll({ target: ref, offset: ['start 75%', 'end 55%'] })
-  const p = useSpring(scrollYProgress, { stiffness: 120, damping: 30, mass: 0.4 })
-  return (
-    <ol ref={ref} className="relative mx-4 mt-10 mb-12 space-y-7 pl-7">
-      <span className="absolute top-1 bottom-1 left-[5px] w-px bg-border" aria-hidden="true" />
-      <motion.span style={reduced ? undefined : { scaleY: p }} className="absolute top-1 bottom-1 left-[5px] w-px origin-top bg-primary" aria-hidden="true" />
-      {HOPS.map((h, i) => <PhoneStep key={h.title} h={h} i={i} p={p} reduced={reduced} />)}
-    </ol>
-  )
-}
-
-function PhoneStep({ h, i, p, reduced }: { h: (typeof HOPS)[number]; i: number; p: MotionValue<number>; reduced: boolean }) {
-  const at = i / (N - 1)
-  const on = useTransform(p, [at - 0.08, at], [0.4, 1], { clamp: true })
-  return (
-    <motion.li style={reduced ? undefined : { opacity: on }} className="relative">
-      <span className="absolute top-1.5 -left-[26px] size-[9px] rounded-full border border-primary bg-background" aria-hidden="true" />
-      <p className="font-mono text-xs text-muted-foreground">{NODES[h.to].t}</p>
-      <p className="mt-1 text-lg font-semibold">{h.title}</p>
-      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{h.body}</p>
-    </motion.li>
   )
 }
 
