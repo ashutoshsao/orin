@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { motion, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react'
+import type { MotionValue } from 'motion/react'
+import { AnimatePresence, motion, useMotionValue, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react'
 import { Wordmark, GithubMark } from '@/components/brand'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { DotField } from '@/components/DotField'
@@ -153,29 +154,40 @@ function CurvedHeadline() {
   )
 }
 
-// A real sequence, so it's numbered. The line between the steps fills as the section scrolls past.
+// Three big words that ink in as you scroll past them — a left-to-right wipe from a faint copy to a
+// full one. The faint copy is always there, so the steps read even if the motion never runs.
 function HowItWorks() {
-  const ref = useRef<HTMLDivElement>(null)
-  const { scrollYProgress } = useScroll({ target: ref, offset: ['start 80%', 'end 60%'] })
-  const fill = useTransform(scrollYProgress, [0, 1], [0, 1])
   return (
     <section id="how" className="scroll-mt-20 border-t pt-16 md:pt-24">
       <CurvedHeadline />
-      <div ref={ref} className="mx-auto max-w-[1360px] px-4 pt-10 pb-20 md:px-10 md:pt-14 md:pb-28">
-        <div className="relative grid gap-10 md:grid-cols-3 md:gap-8">
-          <div className="absolute top-[15px] right-[16%] left-[16%] hidden h-px bg-border md:block" aria-hidden="true">
-            <motion.div style={{ scaleX: fill }} className="h-full origin-left bg-primary" />
-          </div>
-          {STEPS.map((s) => (
-            <div key={s.n} className="relative">
-              <span className="relative z-10 grid size-8 place-items-center rounded-full border bg-background font-mono text-sm">{s.n}</span>
-              <h3 className="mt-5 text-2xl font-semibold tracking-[-0.01em]">{s.title}</h3>
-              <p className="mt-2 max-w-[34ch] leading-relaxed text-muted-foreground">{s.body}</p>
-            </div>
-          ))}
-        </div>
+      <div className="mx-auto max-w-[1360px] px-4 pt-8 pb-20 md:px-10 md:pt-12 md:pb-28">
+        <ol className="divide-y border-y">
+          {STEPS.map((s) => <Step key={s.n} {...s} />)}
+        </ol>
       </div>
     </section>
+  )
+}
+
+function Step({ n, title, body }: { n: string; title: string; body: string }) {
+  const ref = useRef<HTMLLIElement>(null)
+  const reduced = useReducedMotion()
+  // Starts inking as the row comes up past 80% of the screen, done by 45%.
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start 80%', 'start 45%'] })
+  const ink = useSpring(scrollYProgress, { stiffness: 120, damping: 26, mass: 0.3 })
+  const clip = useTransform(ink, (v) => `inset(0 ${100 - v * 100}% 0 0)`)
+  const word = 'font-wide text-[clamp(3rem,9vw,7.5rem)] leading-[0.95] font-[760] tracking-[-0.03em] [font-stretch:116%]'
+  return (
+    <li ref={ref} className="grid items-end gap-3 py-8 md:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] md:gap-10 md:py-10">
+      <div className="flex items-start gap-4">
+        <span className="mt-3 font-mono text-sm text-muted-foreground md:mt-5">{n}</span>
+        <h3 className="relative">
+          <span className={cn(word, 'block text-foreground/12')}>{title}</span>
+          <motion.span aria-hidden="true" style={reduced ? undefined : { clipPath: clip }} className={cn(word, 'absolute inset-0 block text-foreground')}>{title}</motion.span>
+        </h3>
+      </div>
+      <p className="max-w-[40ch] pb-2 text-lg leading-relaxed text-muted-foreground">{body}</p>
+    </li>
   )
 }
 
@@ -208,27 +220,57 @@ function Different() {
   )
 }
 
-// For the engineers reading: the actual architecture, with requests moving along it.
+// For the engineers reading. The section's job is to explain what happens during ONE build round,
+// in order — so the animation is that order. The diagram pins, and scrolling is time: each step draws
+// one hop from its source to its target, lights the box it reaches, and captions what just happened.
+// (An earlier version looped packets along every wire at once: motion with no meaning.)
+const VB = { w: 900, h: 380 }
+type NodeKey = 'browser' | 'api' | 'llm' | 'sandbox' | 'pg' | 'r2'
+const NODES: Record<NodeKey, { x: number; y: number; t: string; s: string }> = {
+  browser: { x: 120, y: 190, t: 'Your browser', s: 'React · Vercel' },
+  api: { x: 460, y: 190, t: 'Orin API', s: 'Bun · Elysia · GKE' },
+  llm: { x: 460, y: 62, t: 'The model', s: '4 providers, one interface' },
+  sandbox: { x: 780, y: 110, t: 'E2B sandbox', s: 'Vite dev server' },
+  pg: { x: 460, y: 318, t: 'Postgres', s: 'saved every round' },
+  r2: { x: 780, y: 290, t: 'Redis → R2', s: 'git bundle per round' },
+}
+// In request order. Each path runs source → target, so it draws in the direction the data moves.
+const HOPS: { d: string; to: NodeKey; label: string; lx: number; ly: number; anchor?: 'start' | 'middle'; title: string; body: string }[] = [
+  { d: 'M 208 190 L 372 190', to: 'api', label: 'server-sent events', lx: 290, ly: 180, anchor: 'middle',
+    title: 'You ask', body: 'Your prompt reaches the API. Everything after this streams back to the page as server-sent events.' },
+  { d: 'M 460 166 L 460 86', to: 'llm', label: 'model calls', lx: 470, ly: 130,
+    title: 'It thinks', body: 'The model reads the conversation so far and answers with the next tool calls.' },
+  { d: 'M 548 176 L 692 124', to: 'sandbox', label: 'bash_tool', lx: 612, ly: 138, anchor: 'middle',
+    title: 'It runs', body: 'Each call runs as a shell command in the project’s own E2B sandbox: writing files, installing packages.' },
+  { d: 'M 692 96 Q 430 -118 150 166', to: 'browser', label: 'live preview', lx: 300, ly: 30, anchor: 'middle',
+    title: 'You watch', body: 'The preview is the sandbox’s own Vite dev server, loaded straight into the page — not proxied through the API.' },
+  { d: 'M 460 214 L 460 294', to: 'pg', label: 'every round', lx: 470, ly: 258,
+    title: 'It saves', body: 'When the round ends, the conversation is written to Postgres — never halfway through one.' },
+  { d: 'M 548 204 L 692 276', to: 'r2', label: 'snapshot queue', lx: 612, ly: 256, anchor: 'middle',
+    title: 'It snapshots', body: 'The files are committed, bundled and queued for R2, so any round can be rewound to later.' },
+]
+const N = HOPS.length
+// Within its slice of the scroll, a hop draws over the first 60% and rests for the remainder.
+const drawn = (i: number) => [i / N + 0.012, i / N + 0.6 / N] as const
+
 function HowItsBuilt() {
   const reduced = useReducedMotion()
   return (
     // `dark` scopes the dark palette to this band, so it reads as a change of room in either theme.
     <section id="built" className="dark scroll-mt-16 bg-background text-foreground">
-      <div className="mx-auto max-w-[1360px] px-4 py-20 md:px-10 md:py-28">
+      <div className="mx-auto max-w-[1360px] px-4 pt-20 md:px-10 md:pt-28">
         <h2 className="max-w-[18ch] font-wide text-[clamp(2rem,4.2vw,3.6rem)] leading-[1.02] font-[720] tracking-[-0.02em] text-balance [font-stretch:112%]">
           How it's <span className="font-display font-normal tracking-[-0.01em] italic [font-stretch:100%]">built</span>
         </h2>
         <p className="mt-5 max-w-[44rem] text-lg leading-relaxed text-muted-foreground">
-          A learning project, written part by part: the agent loop, the sandbox, the event stream, persistence and the deploy are all hand-built rather than taken from a framework.
+          A learning project, written part by part: the agent loop, the sandbox, the event stream, persistence and the deploy are all hand-built rather than taken from a framework. Here is one build round, hop by hop.
         </p>
-        <div className="mt-12 hidden md:block"><Architecture animate={!reduced} /></div>
-        <ol className="mt-10 space-y-5 border-l pl-6 md:hidden">
-          {ARCH_LIST.map(([t, b]) => (
-            <li key={t}><p className="font-semibold">{t}</p><p className="text-sm leading-relaxed text-muted-foreground">{b}</p></li>
-          ))}
-        </ol>
-        <ul className="mt-12 flex flex-wrap gap-2">
-          {STACK.map((s) => <li key={s} className="rounded-full border px-3 py-1 font-mono text-xs text-muted-foreground">{s}</li>)}
+      </div>
+      <div className="hidden md:block">{reduced ? <StillTrace /> : <ScrollTrace />}</div>
+      <div className="md:hidden"><PhoneTrace reduced={!!reduced} /></div>
+      <div className="mx-auto max-w-[1360px] px-4 pb-20 md:px-10 md:pb-28">
+        <ul className="flex flex-wrap gap-2">
+          {STACK.map((t) => <li key={t} className="rounded-full border px-3 py-1 font-mono text-xs text-muted-foreground">{t}</li>)}
         </ul>
         <a href={SOURCE} className="mt-10 inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-card">
           <GithubMark />Read the source on GitHub
@@ -239,60 +281,121 @@ function HowItsBuilt() {
 }
 
 const STACK = ['Bun', 'Elysia', 'React', 'Tailwind', 'Drizzle', 'Postgres', 'Better Auth', 'E2B', 'Redis', 'Cloudflare R2', 'GKE', 'Vercel']
-const ARCH_LIST: [string, string][] = [
-  ['Your browser', 'React on Vercel. Subscribes to the build as a stream of server-sent events.'],
-  ['Orin API', 'Bun and Elysia on GKE. Runs the agent loop and owns one live session per project.'],
-  ['The model', 'DeepSeek, OpenAI, Gemini or Claude, behind one small provider interface.'],
-  ['E2B sandbox', 'A real Vite dev server per project. The preview is its public URL in an iframe.'],
-  ['Postgres', 'The conversation, saved at the end of every round — never halfway through one.'],
-  ['Redis → R2', 'Each round becomes a git bundle, queued and pushed to Cloudflare R2 for rewind.'],
-]
 
-// Nodes are HTML (crisp text at any size); the wires and moving packets are one SVG underneath.
-// Both are laid out in the SVG's own 900×380 space — boxes are placed by converting those same
-// coordinates to percentages — so a wire always ends at the box it points to.
-const VB = { w: 900, h: 380 }
-const NODES = {
-  browser: { x: 120, y: 190, t: 'Your browser', s: 'React · Vercel' },
-  api: { x: 460, y: 190, t: 'Orin API', s: 'Bun · Elysia · GKE' },
-  llm: { x: 460, y: 62, t: 'The model', s: '4 providers, one interface' },
-  sandbox: { x: 780, y: 110, t: 'E2B sandbox', s: 'Vite dev server' },
-  pg: { x: 460, y: 318, t: 'Postgres', s: 'saved every round' },
-  r2: { x: 780, y: 290, t: 'Redis → R2', s: 'git bundle per round' },
+function ScrollTrace() {
+  const track = useRef<HTMLDivElement>(null)
+  const { scrollYProgress } = useScroll({ target: track, offset: ['start start', 'end end'] })
+  const p = useSpring(scrollYProgress, { stiffness: 120, damping: 30, mass: 0.4 })
+  const [step, setStep] = useState(0)
+  useMotionValueEvent(p, 'change', (v) => setStep(Math.min(N - 1, Math.max(0, Math.floor(v * N)))))
+  return (
+    <div ref={track} className="relative h-[360vh]">
+      <div className="sticky top-16 flex h-[calc(100svh-4rem)] flex-col justify-center gap-8 px-10">
+        <Diagram p={p} />
+        <Caption step={step} />
+      </div>
+    </div>
+  )
 }
-const WIRES: { d: string; label: string; lx: number; ly: number; anchor?: 'start' | 'middle'; dur: number }[] = [
-  { d: 'M 208 190 L 372 190', label: 'server-sent events', lx: 290, ly: 180, anchor: 'middle', dur: 1.8 },
-  { d: 'M 460 166 L 460 86', label: 'model calls', lx: 470, ly: 130, dur: 1.6 },
-  { d: 'M 548 176 L 692 124', label: 'bash_tool', lx: 612, ly: 138, anchor: 'middle', dur: 1.7 },
-  // the preview is loaded straight from the sandbox, not through the API — so it arcs over everything
-  { d: 'M 150 166 Q 430 -118 692 96', label: 'live preview, straight from the sandbox', lx: 290, ly: 30, anchor: 'middle', dur: 3 },
-  { d: 'M 460 214 L 460 294', label: 'every round', lx: 470, ly: 258, dur: 1.9 },
-  { d: 'M 548 204 L 692 276', label: 'snapshot queue', lx: 612, ly: 256, anchor: 'middle', dur: 2.2 },
-]
 
-function Architecture({ animate }: { animate: boolean }) {
+// Reduce Motion: the finished trace, and all six steps written out.
+function StillTrace() {
+  const done = useMotionValue(1)
+  return (
+    <div className="px-10 py-12">
+      <Diagram p={done} />
+      <ol className="mx-auto mt-10 grid max-w-[1100px] grid-cols-3 gap-x-10 gap-y-6">
+        {HOPS.map((h, i) => (
+          <li key={h.title}><p className="font-mono text-xs text-muted-foreground">{i + 1}</p><p className="mt-1 font-semibold">{h.title}</p><p className="mt-1 text-sm leading-relaxed text-muted-foreground">{h.body}</p></li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function Diagram({ p }: { p: MotionValue<number> }) {
   return (
     <div className="relative mx-auto aspect-[900/380] w-full max-w-[1100px]">
-      <svg viewBox={`0 0 ${VB.w} ${VB.h}`} className="absolute inset-0 h-full w-full overflow-visible text-border" aria-hidden="true">
-        {WIRES.map((w) => (
-          <g key={w.d}>
-            <path d={w.d} fill="none" stroke="currentColor" strokeWidth="1.2" strokeDasharray="3 5" />
-            <text x={w.lx} y={w.ly} textAnchor={w.anchor ?? 'start'} className="fill-muted-foreground font-mono text-[10.5px]">{w.label}</text>
-            {animate && (
-              <circle r="3.2" className="fill-primary">
-                <animateMotion dur={`${w.dur}s`} repeatCount="indefinite" path={w.d} />
-              </circle>
-            )}
+      <svg viewBox={`0 0 ${VB.w} ${VB.h}`} className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
+        {HOPS.map((h) => (
+          <g key={h.d}>
+            <path d={h.d} fill="none" className="stroke-border" strokeWidth="1.2" strokeDasharray="3 5" />
+            <text x={h.lx} y={h.ly} textAnchor={h.anchor ?? 'start'} className="fill-muted-foreground font-mono text-[10.5px]">{h.label}</text>
           </g>
         ))}
+        {HOPS.map((h, i) => <Hop key={h.d} d={h.d} p={p} i={i} />)}
       </svg>
-      {Object.values(NODES).map((n) => (
-        <div key={n.t} className="absolute w-[19%] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card px-3.5 py-3" style={{ left: `${(n.x / VB.w) * 100}%`, top: `${(n.y / VB.h) * 100}%` }}>
-          <p className="text-sm font-semibold">{n.t}</p>
-          <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{n.s}</p>
-        </div>
-      ))}
+      {(Object.keys(NODES) as NodeKey[]).map((k) => {
+        // The browser is where the round starts, so it's lit from the beginning.
+        const litAt = k === 'browser' ? -1 : drawn(HOPS.findIndex((h) => h.to === k))[1]
+        return <NodeBox key={k} n={NODES[k]} p={p} litAt={litAt} />
+      })}
     </div>
+  )
+}
+
+function Hop({ d, p, i }: { d: string; p: MotionValue<number>; i: number }) {
+  const [from, to] = drawn(i)
+  const length = useTransform(p, [from, to], [0, 1], { clamp: true })
+  return <motion.path d={d} fill="none" className="stroke-primary" strokeWidth="1.8" strokeLinecap="round" style={{ pathLength: length }} />
+}
+
+function NodeBox({ n, p, litAt }: { n: { x: number; y: number; t: string; s: string }; p: MotionValue<number>; litAt: number }) {
+  const lit = useTransform(p, [litAt - 0.01, litAt + 0.02], [0, 1], { clamp: true })
+  return (
+    <div className="absolute w-[19%] -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card px-3.5 py-3" style={{ left: `${(n.x / VB.w) * 100}%`, top: `${(n.y / VB.h) * 100}%` }}>
+      <motion.span style={{ opacity: lit }} className="pointer-events-none absolute -inset-px rounded-xl border border-primary shadow-[0_0_28px_-8px] shadow-primary/60" />
+      <p className="relative text-sm font-semibold">{n.t}</p>
+      <p className="relative mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{n.s}</p>
+    </div>
+  )
+}
+
+function Caption({ step }: { step: number }) {
+  const h = HOPS[step]
+  return (
+    <div className="mx-auto flex w-full max-w-[1100px] items-start justify-between gap-10">
+      <div className="min-h-[7.5rem]">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div key={step} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.22, ease: 'easeOut' }}>
+            <p className="font-mono text-xs text-muted-foreground">{step + 1} / {N}</p>
+            <h3 className="mt-2 text-3xl font-semibold tracking-[-0.01em]">{h.title}</h3>
+            <p className="mt-2 max-w-[56ch] leading-relaxed text-muted-foreground">{h.body}</p>
+          </motion.div>
+        </AnimatePresence>
+      </div>
+      <ol className="flex shrink-0 gap-1.5 pt-1" aria-hidden="true">
+        {HOPS.map((x, i) => <li key={x.title} className={cn('h-1 w-8 rounded-full transition-colors duration-300', i <= step ? 'bg-primary' : 'bg-border')} />)}
+      </ol>
+    </div>
+  )
+}
+
+// Phones: the same six steps as a vertical trace. The rail draws down as you scroll, and each step
+// brightens as the rail reaches it — the text is always there, just quieter before its turn.
+function PhoneTrace({ reduced }: { reduced: boolean }) {
+  const ref = useRef<HTMLOListElement>(null)
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start 75%', 'end 55%'] })
+  const p = useSpring(scrollYProgress, { stiffness: 120, damping: 30, mass: 0.4 })
+  return (
+    <ol ref={ref} className="relative mx-4 mt-10 mb-12 space-y-7 pl-7">
+      <span className="absolute top-1 bottom-1 left-[5px] w-px bg-border" aria-hidden="true" />
+      <motion.span style={reduced ? undefined : { scaleY: p }} className="absolute top-1 bottom-1 left-[5px] w-px origin-top bg-primary" aria-hidden="true" />
+      {HOPS.map((h, i) => <PhoneStep key={h.title} h={h} i={i} p={p} reduced={reduced} />)}
+    </ol>
+  )
+}
+
+function PhoneStep({ h, i, p, reduced }: { h: (typeof HOPS)[number]; i: number; p: MotionValue<number>; reduced: boolean }) {
+  const at = i / (N - 1)
+  const on = useTransform(p, [at - 0.08, at], [0.4, 1], { clamp: true })
+  return (
+    <motion.li style={reduced ? undefined : { opacity: on }} className="relative">
+      <span className="absolute top-1.5 -left-[26px] size-[9px] rounded-full border border-primary bg-background" aria-hidden="true" />
+      <p className="font-mono text-xs text-muted-foreground">{NODES[h.to].t}</p>
+      <p className="mt-1 text-lg font-semibold">{h.title}</p>
+      <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{h.body}</p>
+    </motion.li>
   )
 }
 
