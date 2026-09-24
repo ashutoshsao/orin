@@ -1,16 +1,16 @@
 import { accountAccess, allowlist, db } from "@repo/db";
 import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 
-// Limited-tier trial (7): 62 steps, access for 7 days. Bounds LLM spend, sandbox time and R2 —
+// Limited-tier trial (7): 60 steps, access for 7 days. Bounds LLM spend, sandbox time and R2 —
 // BYOK visitors pay their own tokens but still use our sandboxes and storage.
 //
-// 62, not 60, is 60 to build with plus a little headroom: a repair (the agent being handed its
-// own crashed dev server or a module that won't compile) spends a step like any other LLM call.
-// It isn't free because the budget is reserved in one atomic UPDATE, and carving out an exception
-// inside that statement is how the two-tabs race gets back in. The headroom is deliberately a
-// round gesture rather than arithmetic — repairs are capped per incident (agent/config.ts), not
-// per session, so there's no total to derive this from.
-export const TRIAL_STEPS = 62;
+// 60 is three full runs at `maxIteration` 20 — that's the unit the number means, and it's why it
+// isn't topped up for repairs. A repair (the agent handed its own crashed dev server or a module
+// that won't compile) spends a step like any other LLM call: the budget is reserved in one atomic
+// UPDATE, and carving out an exception inside that statement is how the two-tabs race gets back
+// in. Two repairs out of 60 is noise against a run that costs 20, and repairs are capped per
+// incident (agent/config.ts) precisely so they can't add up to anything that matters.
+export const TRIAL_STEPS = 60;
 export const TRIAL_DAYS = 7;
 
 export const trialExpiry = (from = Date.now()) => new Date(from + TRIAL_DAYS * 24 * 60 * 60 * 1000);
