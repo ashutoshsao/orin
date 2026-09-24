@@ -4,7 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Orin</title>
+    <title>Orin — describe an app, watch it build itself</title>
+    <!-- Link-preview scrapers (WhatsApp, LinkedIn, Slack) don't run JavaScript: whatever a shared
+         link shows must be in this static file. -->
+    <meta name="description" content="Orin is an AI agent that writes real code in a live sandbox. Describe an app in a sentence and watch it appear, then keep steering it." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://orin.ashutoshsao.com/" />
+    <meta property="og:title" content="Orin — describe an app, watch it build itself" />
+    <meta property="og:description" content="An AI agent that writes real code in a live sandbox. You watch the app appear as it works, then keep steering it." />
+    <meta property="og:image" content="https://orin.ashutoshsao.com/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#F5F1E8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0D0E11" media="(prefers-color-scheme: dark)" />
     <script>
       // Set the theme class before first paint (mirrors src/lib/theme.ts) — otherwise a
       // dark-theme user sees a flash of the light palette while the bundle loads.

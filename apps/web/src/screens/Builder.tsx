@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronLeft, ChevronRight, CircleAlert, ExternalLink, History, Loader2, PlugZap, RotateCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, CircleAlert, ExternalLink, History, PlugZap, RotateCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnimatePresence, motion } from 'motion/react'
 import { API, clockTime, getJSON, historyToEvents, postJSON, timeAgo, type AgentEvent, type Pending, type Project, type Snap, type StoredMessage } from '@/lib/api'
 import { activityLine, appTrouble, errorText, eventKind, groupFeed, runStatus, summarizeActivity } from '@/lib/events'
 import { Markdown } from '@/components/markdown'
 import { PreviewTrouble } from '@/components/PreviewTrouble'
+import { DotField } from '@/components/DotField'
 import { BuilderSheet } from '@/components/BuilderSheet'
 import { Kbd } from '@/components/brand'
 import { Button } from '@/components/ui/button'
@@ -425,10 +426,11 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
                 </AnimatePresence>
               </>
             ) : (
-              <div className="grid h-full place-items-center bg-card">
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" /> Building your app…
-                </div>
+              // The ocean-swell dot field rather than a spinner: the wait before a first preview can be
+              // a minute, and a calm moving field reads as "working" without a percentage to lie with.
+              <div className="relative h-full bg-card">
+                <DotField className="absolute inset-0 text-muted-foreground" />
+                <p className="absolute inset-x-0 bottom-4 text-center font-mono text-xs text-muted-foreground">Building your app</p>
               </div>
             )}
           </div>
