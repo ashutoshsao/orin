@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react'
+import { motion, useMotionValueEvent, useReducedMotion, useScroll, useSpring, useTransform } from 'motion/react'
 import { Wordmark, GithubMark } from '@/components/brand'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { DotField } from '@/components/DotField'
@@ -94,18 +94,75 @@ const STEPS = [
   { n: '3', title: 'Steer', body: 'Ask for changes in plain words, or rewind to any snapshot when a turn heads the wrong way.' },
 ]
 
+// The headline rides a curve and slides right-to-left as you scroll (after aardvarkbookclub.com):
+// an SVG arc, the words on it via <textPath>, and scroll progress driving `startOffset`, so each
+// letter tilts to follow the curve. Their glide comes from Lenis hijacking the page scroll; here the
+// scroll value is sprung instead, which gives the same smoothness while leaving native scrolling alone.
+const ARC = 'M -160 382 C 60 282 820 172 1300 172 C 1780 172 2240 292 2740 382'
+
+function CurvedHeadline() {
+  const ref = useRef<HTMLDivElement>(null)
+  const path = useRef<SVGPathElement>(null)
+  const text = useRef<SVGTextElement>(null)
+  const along = useRef<SVGTextPathElement>(null)
+  const reduced = useReducedMotion()
+  const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'end start'] })
+  const smooth = useSpring(scrollYProgress, { stiffness: 80, damping: 22, mass: 0.35 })
+  // How far past the path's start the text must travel to clear it: its own length, as a share of
+  // the path's. Measured, because it depends on the font actually loaded.
+  const travel = useRef(170)
+
+  useEffect(() => {
+    const measure = () => {
+      const t = text.current, p = path.current
+      if (t && p && p.getTotalLength() > 0) travel.current = (t.getComputedTextLength() / p.getTotalLength()) * 100
+    }
+    measure()
+    document.fonts?.ready.then(measure)
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [])
+
+  useMotionValueEvent(smooth, 'change', (p) => {
+    // 100% = parked just past the right end; the far end = its last letter has left on the left.
+    along.current?.setAttribute('startOffset', `${100 - p * (100 + travel.current)}%`)
+  })
+
+  // Reduce Motion: a sentence that only reads while it moves is no sentence at all — show it plainly.
+  if (reduced) {
+    return (
+      <h2 className="mx-auto max-w-[1360px] px-4 font-wide text-[clamp(2rem,4.2vw,3.6rem)] leading-[1.02] font-[720] tracking-[-0.02em] text-balance [font-stretch:112%] md:px-10">
+        One sentence in, <span className="font-display font-normal tracking-[-0.01em] italic [font-stretch:100%]">a working app</span> out.
+      </h2>
+    )
+  }
+  return (
+    <div ref={ref} className="overflow-hidden">
+      <h2 className="sr-only">One sentence in, a working app out.</h2>
+      {/* On phones the arc is drawn wider than the screen and centred, so the letters stay big —
+          squeezed into 390px they'd be ~30px tall and lose the whole effect. */}
+      <svg viewBox="0 0 1920 420" className="-ml-[45%] block w-[190%] max-w-none overflow-visible md:ml-0 md:w-full" aria-hidden="true">
+        <path ref={path} id="orin-arc" d={ARC} fill="none" />
+        <text ref={text} className="fill-foreground font-wide text-[170px] font-[760] tracking-[-0.02em] [font-stretch:116%]">
+          <textPath ref={along} href="#orin-arc" startOffset="100%">
+            One sentence in, <tspan className="font-display font-normal tracking-[-0.01em] italic [font-stretch:100%]" fontSize="1.12em">a working app</tspan> out.
+          </textPath>
+        </text>
+      </svg>
+    </div>
+  )
+}
+
 // A real sequence, so it's numbered. The line between the steps fills as the section scrolls past.
 function HowItWorks() {
-  const ref = useRef<HTMLElement>(null)
+  const ref = useRef<HTMLDivElement>(null)
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start 80%', 'end 60%'] })
   const fill = useTransform(scrollYProgress, [0, 1], [0, 1])
   return (
-    <section id="how" ref={ref} className="scroll-mt-20 border-t">
-      <div className="mx-auto max-w-[1360px] px-4 py-20 md:px-10 md:py-28">
-        <h2 className="max-w-[18ch] font-wide text-[clamp(2rem,4.2vw,3.6rem)] leading-[1.02] font-[720] tracking-[-0.02em] text-balance [font-stretch:112%]">
-          One sentence in, <span className="font-display font-normal tracking-[-0.01em] italic [font-stretch:100%]">a working app</span> out.
-        </h2>
-        <div className="relative mt-14 grid gap-10 md:grid-cols-3 md:gap-8">
+    <section id="how" className="scroll-mt-20 border-t pt-16 md:pt-24">
+      <CurvedHeadline />
+      <div ref={ref} className="mx-auto max-w-[1360px] px-4 pt-10 pb-20 md:px-10 md:pt-14 md:pb-28">
+        <div className="relative grid gap-10 md:grid-cols-3 md:gap-8">
           <div className="absolute top-[15px] right-[16%] left-[16%] hidden h-px bg-border md:block" aria-hidden="true">
             <motion.div style={{ scaleX: fill }} className="h-full origin-left bg-primary" />
           </div>
