@@ -220,7 +220,10 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   // Split in two because the mobile sheet reverses them: at its peek height only the TOP of
   // the sheet is on screen, so the composer — the one thing a phone user needs — has to sit
   // there, with the conversation above it once the sheet is dragged up.
-  const chatFeed = (
+  // Three panes, because the phone layout puts them in three different places: navigation in a
+  // top bar, the app in the middle, the conversation in a sheet. On desktop they stack in the
+  // one column, which is why this used to be a single block.
+  const chatHeader = (
     <>
           <header className="flex items-center justify-between gap-3 px-4 pt-5 pb-4">
             <div className="flex min-w-0 items-center gap-1.5">
@@ -278,6 +281,10 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
             )}
           </AnimatePresence>
 
+    </>
+  )
+
+  const chatLog = (
           <ScrollArea className="min-h-0 flex-1">
             <div className="flex flex-col gap-[22px] px-6 pt-2.5 pb-6">
               {events.length === 0 && (
@@ -305,7 +312,6 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
               <div ref={feedEndRef} />
             </div>
           </ScrollArea>
-    </>
   )
 
   const chatComposer = (
@@ -348,7 +354,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
                     onChange={(ev) => setAnswer(ev.target.value)}
                     placeholder="Or say it in your own words…"
                     autoFocus
-                    className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80"
+                    className="min-w-0 flex-1 bg-transparent text-base outline-none md:text-[15px] placeholder:text-muted-foreground/80"
                   />
                   <Kbd>↵</Kbd>
                   <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!answer.trim()}>Send</Button>
@@ -364,7 +370,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
                   onChange={(e) => setFollowUp(e.target.value)}
                   placeholder={outOfSteps ? 'No steps left in this trial' : sessionId ? 'Ask for a change…' : 'Connecting…'}
                   disabled={!sessionId || outOfSteps}
-                  className="min-w-0 flex-1 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/80 disabled:opacity-60"
+                  className="min-w-0 flex-1 bg-transparent text-base outline-none md:text-[15px] placeholder:text-muted-foreground/80 disabled:opacity-60"
                 />
                 <Kbd>↵</Kbd>
                 <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!followUp.trim() || !sessionId || outOfSteps}>
@@ -454,8 +460,11 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   if (!isDesktop) {
     return (
       <div className="flex h-dvh flex-col bg-background">
-        <main className="flex min-h-0 flex-1 p-3">{previewPane}</main>
-        <BuilderSheet status={status} composer={chatComposer}>{chatFeed}</BuilderSheet>
+        {/* Navigation belongs on the screen, not inside the sheet: leaving the project shouldn't
+            mean dragging the conversation open first. */}
+        <div className="shrink-0">{chatHeader}</div>
+        <main className="flex min-h-0 flex-1 px-3 pb-3">{previewPane}</main>
+        <BuilderSheet status={status} composer={chatComposer}>{chatLog}</BuilderSheet>
         {rewindDialog}
       </div>
     )
@@ -463,7 +472,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
 
   return (
     <div className="grid h-dvh grid-cols-1 bg-background md:grid-cols-[440px_minmax(0,1fr)]">
-      <aside className="flex min-h-0 flex-col md:border-r">{chatFeed}{chatComposer}</aside>
+      <aside className="flex min-h-0 flex-col md:border-r">{chatHeader}{chatLog}{chatComposer}</aside>
       <main className="hidden min-w-0 p-5 md:flex">{previewPane}</main>
       {rewindDialog}
     </div>
