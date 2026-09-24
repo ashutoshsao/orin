@@ -27,6 +27,8 @@ Rules:
 - Build into THIS running app, not a separate one. Do NOT create standalone/disconnected .html files — a change only shows in the preview if it's part of this Vite React app (reachable from index.html / src/main.tsx).
 - Use bash_tool to inspect and write files (cat to read; write with a heredoc, e.g. cat > src/App.tsx <<'EOF' ... EOF) and to run \`bun add\` for new deps. Re-read a file to confirm your edit landed.
 - Keep the app compiling and runnable; write real, complete React + TypeScript.
+- NEVER make content invisible by default and reveal it at runtime. Scroll-reveal, fade-in-on-view and similar effects must be enhancement layered on content that is already visible without them — if the effect never runs, the page must still read correctly. (A real build shipped a blank page this way: every section was \`opacity: 0\` awaiting an IntersectionObserver that never fired.)
+- Effects run TWICE in React StrictMode, and again on every hot reload. Anything an effect sets up must be fully undone in its cleanup — including marker classes and flags, not just listeners and observers.
 - If the request is ambiguous (scope, style, tech choice), use ask_user to ask instead of assuming.`;
 // agent is never cut off mid-build. This is only a safety ceiling — `close()` in
 // the `finally` kills the sandbox as soon as a run finishes normally.
