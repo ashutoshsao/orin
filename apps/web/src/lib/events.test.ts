@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { appTrouble, errorText, runStatus } from './events'
+import { activityLine, appTrouble, errorText, runStatus } from './events'
 import type { AgentEvent } from './api'
 
 // Live events carry a sessionId; replayed history doesn't, and must not drive the status bar.
@@ -90,5 +90,34 @@ describe('errorText', () => {
     const text = errorText(ev('preview_failed', { message: 'Transform failed: [PARSE_ERROR] at line 3' }))
     expect(text).not.toContain('PARSE_ERROR')
     expect(text).toContain('Tell me what the app should do')
+  })
+})
+
+// The feed used to say `ran bash_tool` nine times in a row. Real commands (228 sampled from the
+// DB) are 2.4 KB chains starting with `cd`, so the useful part is the first line, verbatim.
+describe('activityLine for tool calls', () => {
+  const call = (tools: unknown) => ({ ts: '', sessionId: 's1', event: 'tool_call', tools }) as AgentEvent
+
+  test('shows the command, not the tool name', () => {
+    const line = activityLine(call([{ name: 'bash_tool', ok: true, command: "cd /home/user/react-template && cat > src/App.tsx <<'EOF'" }]))
+    expect(line).toEqual({ label: '$', detail: "cd /home/user/react-template && cat > src/App.tsx <<'EOF'" })
+  })
+
+  test('a failed command says so', () => {
+    expect(activityLine(call([{ name: 'bash', ok: false, command: 'bun add nope' }])).detail).toContain('(failed)')
+  })
+
+  // Old rows (and any tool without a command, like ask_user) still have to render.
+  test('falls back to the tool name when there is no command', () => {
+    expect(activityLine(call([{ name: 'ask_user', ok: true }])).detail).toBe('ask_user')
+  })
+
+  test('several calls in one round are all shown', () => {
+    const d = activityLine(call([
+      { name: 'bash', ok: true, command: 'ls -la' },
+      { name: 'bash', ok: true, command: 'cat package.json' },
+    ])).detail
+    expect(d).toContain('ls -la')
+    expect(d).toContain('cat package.json')
   })
 })

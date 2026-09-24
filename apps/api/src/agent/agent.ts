@@ -32,6 +32,22 @@ Rules:
 // the `finally` kills the sandbox as soon as a run finishes normally.
 const SANDBOX_TIMEOUT_MS = 60 * 60_000;
 
+// What the feed shows for a tool call: the command the model actually asked for, not an
+// interpretation of it. Deriving meaning was the first idea and the data killed it — of 228 real
+// commands, 99% were chained with `&&`, 95% began with `cd`, and they averaged 2.4 KB (max 36 KB)
+// because writing a file is a heredoc. So any verb→label mapping would have said "changed
+// directory" almost every time.
+//
+// FIRST LINE, because a heredoc's first line ends at the `<<'EOF'` marker — exactly the useful
+// part — and the rest is the file being written. Capped because this rides in every SSE event and
+// Postgres row, and because a 36 KB heredoc body has no business in either.
+const COMMAND_LINE_MAX = 160;
+export function commandLine(command: string | undefined): string | undefined {
+  if (!command) return undefined;
+  const first = command.split("\n", 1)[0]!.trim();
+  return first.length > COMMAND_LINE_MAX ? `${first.slice(0, COMMAND_LINE_MAX)}…` : first;
+}
+
 // How much dev-server stderr to hand the agent. Enough for Vite's startup error with its
 // stack, bounded so a crash loop can't flood the context window.
 const DEV_SERVER_STDERR_CHARS = 2_000;
@@ -529,7 +545,11 @@ export class AgentSession {
         this.log("tool_call", {
           iteration: start,
           durationMs: toolDurationMs,
-          tools: response.content.toolCalls.map((t, i) => ({ name: t.name, ok: toolResponse[i].ok }))
+          tools: response.content.toolCalls.map((t, i) => ({
+            name: t.name,
+            ok: toolResponse[i].ok,
+            command: commandLine(t.argument?.command),
+          })),
         })
 
         // Round complete (assistant tool_calls + tool results both appended). Snapshot

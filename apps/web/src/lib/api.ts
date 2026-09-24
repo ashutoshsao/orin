@@ -43,6 +43,15 @@ export async function getJSON<T>(path: string, fallback: T): Promise<T> {
 
 // Map persisted messages to feed events so reopening replays the transcript. Skips
 // system + raw tool results (noise); agent memory is restored server-side regardless.
+// Mirrors commandLine() in apps/api/src/agent/agent.ts — the live event arrives already trimmed,
+// but history is raw rows, so the same rule is applied here. Keep the two in step.
+const COMMAND_LINE_MAX = 160
+function commandLine(command: string | undefined): string | undefined {
+  if (!command) return undefined
+  const first = command.split('\n', 1)[0]!.trim()
+  return first.length > COMMAND_LINE_MAX ? `${first.slice(0, COMMAND_LINE_MAX)}\u2026` : first
+}
+
 export function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
   const out: AgentEvent[] = []
   for (const m of messages) {
@@ -53,8 +62,14 @@ export function historyToEvents(messages: StoredMessage[]): AgentEvent[] {
       if (typeof m.content === 'string') {
         out.push({ event: 'final', content: m.content, ts })
       } else {
-        const calls = (m.content as { toolCalls?: { name: string }[] })?.toolCalls ?? []
-        if (calls.length) out.push({ event: 'tool_call', tools: calls.map((t) => ({ name: t.name, ok: true })), ts })
+        const calls = (m.content as { toolCalls?: { name: string; argument?: { command?: string } }[] })?.toolCalls ?? []
+        // Same first-line-of-the-command treatment the live event gets (agent.ts commandLine),
+        // so a reopened project reads identically to one you watched being built.
+        if (calls.length) out.push({
+          event: 'tool_call',
+          tools: calls.map((t) => ({ name: t.name, ok: true, command: commandLine(t.argument?.command) })),
+          ts,
+        })
       }
     }
   }

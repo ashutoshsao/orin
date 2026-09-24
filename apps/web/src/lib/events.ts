@@ -48,12 +48,19 @@ export function eventKind(e: AgentEvent): EventKind {
 // Short label + detail for a telemetry row. Kept terse: the label carries the meaning,
 // the detail only appears when it adds something.
 export function activityLine(e: AgentEvent): { label: string; detail: string } {
-  const tools = (e.tools as { name: string; ok: boolean }[] | undefined) ?? []
+  const tools = (e.tools as { name: string; ok: boolean; command?: string }[] | undefined) ?? []
   switch (e.event) {
     case 'sandbox_created': return { label: 'environment', detail: 'ready' }
     case 'snapshot_restored': return { label: 'restored', detail: 'files from last snapshot' }
     case 'llm_call': return { label: 'thinking', detail: e.status === 'toolCall' ? '' : String(e.status ?? '') }
-    case 'tool_call': return { label: 'ran', detail: tools.map((t) => `${t.name}${t.ok ? '' : ' (failed)'}`).join(', ') }
+    // The command the model actually asked for, rendered like a terminal line. Naming what a
+    // command *does* was the first attempt: real data (228 commands) showed 99% chained with `&&`
+    // and 95% starting with `cd`, so every row would have read "changed directory". The raw first
+    // line is both more honest and more useful. The server caps it; CSS truncates the rest.
+    case 'tool_call': {
+      const shown = tools.map((t) => `${t.command ?? t.name}${t.ok ? '' : '  (failed)'}`)
+      return { label: '$', detail: shown.join('   ') }
+    }
     case 'snapshot': return { label: 'snapshot', detail: String(e.commit ?? '').slice(0, 7) }
     case 'snapshot_skipped': return { label: 'not saved', detail: `workspace ${(Number(e.bytes) / 1024 / 1024).toFixed(1)} MB is over the snapshot limit` }
     case 'preview_ready': return { label: 'preview', detail: e.httpStatus === '200' ? 'live' : `status ${e.httpStatus}` }
