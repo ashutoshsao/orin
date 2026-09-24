@@ -110,8 +110,10 @@ export class AgentSession {
   // attach — the build carries on without it.
   private hmr?: HmrListener | null;
   private previewPort = 8080;
-  // Shared by both repair paths (dead dev server, compile error) — a run gets this many
-  // attempts in total, not this many of each.
+  // Attempts remaining for the CURRENT breakage, shared by both repair paths (dead dev server,
+  // compile error). It refills the moment the app is proven healthy again, so the budget is per
+  // incident, not per session: a break at step 5 that cost two tries must not leave a break at
+  // step 50 silently unfixed. Breaks are rare, so in practice this is "two tries, then ask".
   private repairsLeft = MAX_REPAIRS;
 
   // Private: the only way to get a session is via `create`, which guarantees the
@@ -275,6 +277,10 @@ export class AgentSession {
     });
     switch (outcome.kind) {
       case "ready":
+        // The server is up and answering. If this was a restart after a crash, that incident is
+        // over — refill. A restart that fails returns "exited" instead, so a crash loop can't
+        // refill itself here.
+        this.repairsLeft = MAX_REPAIRS;
         this.log("preview_ready", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
         void this.watchAppErrors(outcome.url);
         return { url: outcome.url, httpStatus: outcome.httpStatus };
@@ -317,6 +323,8 @@ export class AgentSession {
     // very likely already fixed this in the round we're closing — re-reporting a stale error
     // would send it chasing a bug that no longer exists.
     if (!(await hmr.revalidate())) {
+      // Healthy again — the next breakage starts with a full allowance of its own.
+      this.repairsLeft = MAX_REPAIRS;
       this.log("preview_recovered", { iteration });
       return false;
     }

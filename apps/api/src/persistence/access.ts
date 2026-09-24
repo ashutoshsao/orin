@@ -1,16 +1,16 @@
 import { accountAccess, allowlist, db } from "@repo/db";
 import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
-import { MAX_REPAIRS } from "../agent/config";
 
-// Limited-tier trial (7): 60 steps to BUILD with, access for 7 days. Bounds LLM spend, sandbox
-// time and R2 — BYOK visitors pay their own tokens but still use our sandboxes and storage.
-export const TRIAL_BUILD_STEPS = 60;
-// A repair — the agent being handed its own crashed dev server or a module that won't compile —
-// spends a step like any other LLM call, because the budget is reserved in one atomic UPDATE and
-// carving out exceptions there is how races get in. So instead of making repairs free, the trial
-// is topped up by exactly the repair cap: nobody loses build steps to fixing the agent's mistake.
-// Derived, not a second magic number — raise MAX_REPAIRS and the allowance follows.
-export const TRIAL_STEPS = TRIAL_BUILD_STEPS + MAX_REPAIRS;
+// Limited-tier trial (7): 62 steps, access for 7 days. Bounds LLM spend, sandbox time and R2 —
+// BYOK visitors pay their own tokens but still use our sandboxes and storage.
+//
+// 62, not 60, is 60 to build with plus a little headroom: a repair (the agent being handed its
+// own crashed dev server or a module that won't compile) spends a step like any other LLM call.
+// It isn't free because the budget is reserved in one atomic UPDATE, and carving out an exception
+// inside that statement is how the two-tabs race gets back in. The headroom is deliberately a
+// round gesture rather than arithmetic — repairs are capped per incident (agent/config.ts), not
+// per session, so there's no total to derive this from.
+export const TRIAL_STEPS = 62;
 export const TRIAL_DAYS = 7;
 
 export const trialExpiry = (from = Date.now()) => new Date(from + TRIAL_DAYS * 24 * 60 * 60 * 1000);
