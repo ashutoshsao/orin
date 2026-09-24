@@ -12,13 +12,17 @@ export const tools: ToolDefinition[] = [
     type: "function",
     function: {
       name: "bash_tool",
-      description: "its a bash tool function, you can call to run bash command",
+      description: `Run a shell command in the app. The working directory is always ${WORKDIR} — the command is executed there, so paths are relative to it.`,
       parameters: {
         type: "object",
         properties: {
           command: {
             type: "string",
-            description: "shell commmand that needs to be executed eg- ls, cat, echo",
+            // The schema is what the model reads while composing each command, so the cwd is
+            // stated HERE and not only in the system prompt: 94% of real commands opened with a
+            // redundant `cd` into the directory they were already running in. Built from WORKDIR
+            // so it can never drift from the cwd actually passed to commands.run below.
+            description: `Shell command to run, e.g. \`ls -la\`, \`cat src/App.tsx\`, \`bun add zod\`. It already runs in ${WORKDIR} — use relative paths and do NOT start with \`cd ${WORKDIR} &&\`.`,
           },
         },
         required: ["command"],
