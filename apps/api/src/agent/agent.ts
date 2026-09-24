@@ -1,7 +1,8 @@
 import { Sandbox } from "e2b";
 import { ContextType, LLMProvider, MessageType } from "./types";
 import { toolExecution, tools, WORKDIR } from "./tools";
-import { config, MAX_REPAIRS } from "./config";
+import { config } from "./config";
+import { freshRepairState, nextRepair, type RepairState } from "./repairPolicy";
 import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
 import { startDevServer, type DevServerHandle } from "./devServer";
 import { connectHmr, moduleUrlPath, type HmrListener } from "./hmrListener";
@@ -114,9 +115,7 @@ export class AgentSession {
   // compile error). It refills the moment the app is proven healthy again, so the budget is per
   // incident, not per session: a break at step 5 that cost two tries must not leave a break at
   // step 50 silently unfixed. Breaks are rare, so in practice this is "two tries, then ask".
-  private repairsLeft = MAX_REPAIRS;
-  // The compile error already handed to the agent, so the same text isn't pushed again each round.
-  private lastReportedError?: string;
+  private repair: RepairState = freshRepairState();
 
   // Private: the only way to get a session is via `create`, which guarantees the
   // sandbox is already booted — so `sandbox` is never null and never half-ready.
@@ -282,7 +281,7 @@ export class AgentSession {
         // The server is up and answering. If this was a restart after a crash, that incident is
         // over — refill. A restart that fails returns "exited" instead, so a crash loop can't
         // refill itself here.
-        this.repairsLeft = MAX_REPAIRS;
+        this.repair = freshRepairState();
         this.log("preview_ready", { port, url: outcome.url, httpStatus: outcome.httpStatus, ms: outcome.ms });
         void this.watchAppErrors(outcome.url);
         return { url: outcome.url, httpStatus: outcome.httpStatus };
@@ -324,30 +323,23 @@ export class AgentSession {
     // Ask before acting. Vite sends nothing when code starts compiling again, and the agent has
     // very likely already fixed this in the round we're closing — re-reporting a stale error
     // would send it chasing a bug that no longer exists.
-    if (!(await hmr.revalidate())) {
-      // Healthy again — the next breakage starts with a full allowance of its own.
-      this.repairsLeft = MAX_REPAIRS;
-      this.lastReportedError = undefined;
+    // Ask before acting, then let the policy (repairPolicy.ts) decide — it owns the counting.
+    const stillBroken = await hmr.revalidate();
+    const err = hmr.error;
+    const decision = nextRepair(this.repair, stillBroken && err ? err.message : null);
+    this.repair = decision.state;
+
+    if (decision.kind === "recovered") {
       this.log("preview_recovered", { iteration });
       return false;
     }
-    const err = hmr.error;
     if (!err) return false;
-
-    // Out of turns. Stop pulling the agent back and let the run end so the user can weigh in —
-    // a model that hasn't fixed it in two turns is usually missing intent, not effort.
-    if (this.repairsLeft <= 0) {
+    if (decision.kind === "giveup") {
       this.log("preview_failed", { iteration, message: err.message, id: err.id });
       return false;
     }
-    // The allowance counts the agent's TURNS on this breakage, not the number of times we've
-    // mentioned it: fixing typically takes a read and then an edit, and charging that pattern
-    // two attempts would declare failure on a repair that was going fine. So the error text is
-    // pushed once — it's still in context — and the counter ticks each round it stays broken.
-    const isNew = err.message !== this.lastReportedError;
-    this.repairsLeft--;
 
-    if (isNew) {
+    if (decision.report) {
       const where = moduleUrlPath(err.id);
       this.context.push({
         role: "user",
@@ -356,9 +348,9 @@ export class AgentSession {
           `${where ? ` — the failing module is ${where}` : ""}. Fix it, then stop and say what you fixed. ` +
           `Vite reported:\n\n${err.message}`,
       });
-      this.lastReportedError = err.message;
     }
-    this.log("preview_repairing", { iteration, id: err.id, message: err.message, reported: isNew, repairsLeft: this.repairsLeft });
+    const isNew = decision.report;
+    this.log("preview_repairing", { iteration, id: err.id, message: err.message, reported: isNew, repairsLeft: this.repair.repairsLeft });
     return true;
   }
 
@@ -390,13 +382,13 @@ export class AgentSession {
     const stderr = (handle.stderr ?? "").trim().slice(-DEV_SERVER_STDERR_CHARS);
     this.devServer = undefined; // consumed — don't report the same corpse twice
 
-    if (this.repairsLeft <= 0) {
+    if (this.repair.repairsLeft <= 0) {
       // Out of attempts. Now it IS the user's problem, so say so in plain words — still no
       // stack trace, but never an indefinite "working on it".
       this.log("preview_failed", { iteration, exitCode: handle.exitCode, stderr });
       return false;
     }
-    this.repairsLeft--;
+    this.repair = { ...this.repair, repairsLeft: this.repair.repairsLeft - 1 };
 
     this.context.push({
       role: "user",
@@ -406,7 +398,7 @@ export class AgentSession {
         `that fails to load, or a file that throws when imported. Fix the cause, then stop and say what you fixed. ` +
         `Its output was:\n\n${stderr}`,
     });
-    this.log("preview_repairing", { iteration, exitCode: handle.exitCode, stderr, repairsLeft: this.repairsLeft });
+    this.log("preview_repairing", { iteration, exitCode: handle.exitCode, stderr, repairsLeft: this.repair.repairsLeft });
 
     // Restart in the background: the agent edits while the server comes back up, exactly as
     // on a normal build. If it dies again, the next round boundary catches it.

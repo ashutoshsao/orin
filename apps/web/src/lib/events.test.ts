@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { runStatus } from './events'
+import { appTrouble, errorText, runStatus } from './events'
 import type { AgentEvent } from './api'
 
 // Live events carry a sessionId; replayed history doesn't, and must not drive the status bar.
@@ -48,5 +48,47 @@ describe('runStatus with a broken app', () => {
   test('offline still wins over everything', () => {
     const s = runStatus([ev('preview_error')], { ...opts, online: false })
     expect(s.label).toBe('offline')
+  })
+})
+
+// Drives the overlay that covers the iframe, so getting this wrong means either showing the
+// user a Vite stack trace or hiding a working app behind a panel.
+describe('appTrouble', () => {
+  test('a compile error and a dead dev server both read as fixing', () => {
+    expect(appTrouble([ev('preview_error')])).toBe('fixing')
+    expect(appTrouble([ev('preview_server_exited')])).toBe('fixing')
+  })
+
+  test('out of repair turns reads as failed, not fixing', () => {
+    expect(appTrouble([ev('preview_error'), ev('preview_failed')])).toBe('failed')
+  })
+
+  test('nothing to show for an app that compiles', () => {
+    expect(appTrouble([ev('run_start'), ev('tool_call'), ev('final')])).toBeNull()
+  })
+
+  test.each([
+    ['preview_recovered', 'the compile error cleared'],
+    ['preview_ready', 'the dev server came back up'],
+    ['snapshot_restored', 'the project was reopened'],
+  ])('%s clears it (%s)', (clearing) => {
+    expect(appTrouble([ev('preview_error'), ev(clearing)])).toBeNull()
+  })
+
+  test('a break after a recovery shows again', () => {
+    expect(appTrouble([ev('preview_error'), ev('preview_recovered'), ev('preview_error')])).toBe('fixing')
+  })
+
+  test('replayed history is ignored, like the status bar', () => {
+    expect(appTrouble([replayed('preview_error')])).toBeNull()
+  })
+})
+
+describe('errorText', () => {
+  // The whole point of the feature: the agent sees the stack trace, the user sees a sentence.
+  test('giving up never leaks the compiler output', () => {
+    const text = errorText(ev('preview_failed', { message: 'Transform failed: [PARSE_ERROR] at line 3' }))
+    expect(text).not.toContain('PARSE_ERROR')
+    expect(text).toContain('Tell me what the app should do')
   })
 })
