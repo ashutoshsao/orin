@@ -1,35 +1,42 @@
 # Orin
 
-Orin is a Lovable-style AI app builder: you describe an app in plain language, and an agent scaffolds
-and builds it live inside an isolated cloud sandbox — streaming its progress to your browser and
-serving the running result back in an iframe.
+Orin is a Lovable-style AI app builder, live at [orin.ashutoshsao.com](https://orin.ashutoshsao.com): you
+describe an app in plain language, and an agent scaffolds and builds it live inside an isolated cloud
+sandbox, streaming its progress to your browser and serving the running app back in an iframe.
 
-The current focus is proving the core agent loop end to end before layering product infrastructure
-around it. Today Orin can take a one-line prompt, run a multi-step tool-calling loop against a real
-LLM, execute the tool calls inside a per-session [E2B](https://e2b.dev) sandbox, and hand back a live
-preview URL — driven either from the CLI or from a browser over SSE.
+## What's built
+
+- **Provider-agnostic agent loop**: one `LLMProvider` interface with adapters for OpenAI-compatible
+  APIs (DeepSeek, Gemini) and Claude's Messages API. Provider-specific shapes never leak into the loop.
+- **Crash-safe builds**: at every round boundary the sandbox's code is git-committed and bundled, and a
+  background worker pushes it to Cloudflare R2 off the hot path. A dropped connection or dead sandbox
+  resumes from the last durable round, or rewinds to any earlier step.
+- **Resumable sessions**: one live session per project, owned by the server rather than the connection.
+  Events carry ids and a replay buffer, so a browser can reconnect mid-build and catch up.
+- **Access tiers**: invite allowlist, reusable guest links, and bring-your-own-key, with step budgets
+  enforced atomically in Postgres before every LLM call (fail closed).
+- **Deployed** on Kubernetes (GKE) with nightly Postgres backups verified by restore; web on Vercel.
 
 ## How it works
 
 ```
-browser (apps/web) ──prompt──▶ Elysia SSE endpoint (apps/api)
-     ▲                              │  creates an AgentSession
+browser (apps/web) ──prompt──▶ Elysia server (apps/api) ── live session per project (SSE, replayable)
+     ▲                              │
      │                              ▼
- event feed +                 Agent loop ──▶ LLMProvider ──▶ DeepSeek (OpenAI SDK, Chat Completions)
- <iframe> preview                  │              tool calls
+ event feed +                 Agent loop ──▶ LLMProvider ──▶ OpenAI-compatible (DeepSeek, Gemini)
+ <iframe> preview                  │                     └─▶ Claude (Messages API)
      │                              ▼
-     └───── preview URL ◀── E2B sandbox (bash_tool runs here; Vite dev server via getHost)
+     └───── preview URL ◀── E2B sandbox ── round boundary ──▶ git bundle ──▶ Redis queue ──▶ R2
+                                                         └──▶ context rows ──▶ Postgres
 ```
 
 - **Agent loop** (`apps/api/src/agent`) owns the cycle: call the LLM → run any requested tool calls →
-  feed results back → repeat until a final answer. It never sees provider-specific shapes — those stay
-  behind an `LLMProvider` interface (`DeepSeekProvider` today).
-- **Sandbox** — each `AgentSession` boots its own E2B sandbox from a custom template that pre-bakes a
-  Vite + React workspace and its dependencies. The agent's `bash_tool` executes inside it, so nothing
-  touches the host filesystem. The sandbox is torn down when the session ends (or the browser
-  disconnects).
-- **Transport** — agent events stream to the browser as Server-Sent Events. Not GraphQL subscriptions;
-  SSE is the event transport (a GraphQL CRUD layer may come later).
+  feed results back → repeat until a final answer. Every side effect (persistence, snapshots, budget)
+  is an injected callback, so the loop stays DB- and HTTP-agnostic.
+- **Sandbox**: each session boots its own E2B sandbox from a custom template that pre-bakes a
+  Vite + React workspace and its dependencies. The agent's tools execute inside it, so nothing
+  touches the host filesystem.
+- **Transport**: agent events stream to the browser as Server-Sent Events.
 
 ## Layout
 
@@ -92,5 +99,5 @@ Then open http://localhost:5173, enter a prompt, and watch it build.
 
 ## Stack
 
-Bun + Turborepo · Vite + React · Elysia (SSE) · E2B (sandboxes) · DeepSeek via the OpenAI SDK
-(Chat Completions).
+Bun + Turborepo · Vite + React · Elysia (SSE) · E2B (sandboxes) · PostgreSQL + Drizzle · Redis ·
+Cloudflare R2 · OpenAI-compatible and Claude APIs · Kubernetes (GKE)
