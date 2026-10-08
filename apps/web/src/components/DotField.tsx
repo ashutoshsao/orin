@@ -11,8 +11,12 @@ const R = 1.15            // resting radius
 const WAVELENGTH = 190    // px between wave fronts
 const SPEED = 62          // px per second across the field
 
-export function DotField({ className }: { className?: string }) {
+// `paused` stops drawing while the field is covered (the landing demo fades it out under the built
+// site, and an IntersectionObserver can't see opacity); clearing it starts the swell again.
+export function DotField({ className, paused = false }: { className?: string; paused?: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null)
+  const pausedRef = useRef(paused)
+  const startRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     const canvas = ref.current
@@ -21,12 +25,17 @@ export function DotField({ className }: { className?: string }) {
     const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
     const t0 = performance.now()
     let w = 0, h = 0, dpr = 1, raf = 0, visible = true
+    // Read once and again only when the theme flips: getComputedStyle every frame forces a style
+    // recalculation 60 times a second.
+    let color = getComputedStyle(canvas).color
+    const themeWatch = new MutationObserver(() => { color = getComputedStyle(canvas).color; if (reduced || pausedRef.current) draw(0.9) })
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
 
     function draw(t: number) {
       if (!w || !h || !ctx) return
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, h)
-      ctx.fillStyle = getComputedStyle(canvas!).color
+      ctx.fillStyle = color
       // Fronts come from just off the top-left corner and are bent by a slow cross-swell, so no
       // front is a perfect arc — the asymmetry is what makes it read as sea rather than an echo.
       const ox = -w * 0.08, oy = -h * 0.14, maxD = Math.hypot(w - ox, h - oy)
@@ -51,7 +60,7 @@ export function DotField({ className }: { className?: string }) {
     function loop() {
       cancelAnimationFrame(raf)
       const step = (now: number) => {
-        if (!visible) return
+        if (!visible || pausedRef.current) return
         draw((now - t0) / 1000)
         raf = requestAnimationFrame(step)
       }
@@ -74,6 +83,7 @@ export function DotField({ className }: { className?: string }) {
       if (visible && !reduced) loop()
     })
     io.observe(canvas)
+    startRef.current = () => { if (visible && !reduced) loop() }
     if (!reduced) loop()
 
     // Everything set up here is undone here — StrictMode and hot reload both run this twice.
@@ -81,8 +91,14 @@ export function DotField({ className }: { className?: string }) {
       cancelAnimationFrame(raf)
       ro.disconnect()
       io.disconnect()
+      themeWatch.disconnect()
     }
   }, [])
+
+  useEffect(() => {
+    pausedRef.current = paused
+    if (!paused) startRef.current()
+  }, [paused])
 
   return <canvas ref={ref} aria-hidden="true" className={cn('block h-full w-full', className)} />
 }
