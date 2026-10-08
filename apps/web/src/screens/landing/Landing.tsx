@@ -8,6 +8,12 @@ import { LandingDemo } from './LandingDemo'
 
 const SOURCE = 'https://github.com/ashutoshsao/orin'
 
+// The landing's pill buttons and links: bespoke (marketing size, fully round), so not the app's
+// Button — but defined once, with the app's focus ring.
+const PILL = 'inline-flex items-center gap-2 rounded-full font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50'
+const PILL_SOLID = cn(PILL, 'bg-primary px-6 py-3 text-[15px] font-semibold text-primary-foreground transition-transform hover:-translate-y-px active:translate-y-0')
+const PILL_OUTLINE = cn(PILL, 'border transition-colors hover:bg-card')
+
 // The public front door (spec 10). Motion follows one rule: it is transform-only or runs on mount,
 // never content held at opacity 0 until a scroll observer fires — that exact pattern blanked a
 // generated site for every visitor without Reduce Motion, and the page selling the agent that now
@@ -15,8 +21,9 @@ const SOURCE = 'https://github.com/ashutoshsao/orin'
 export function Landing({ onStart }: { onStart: () => void }) {
   return (
     <div className="min-h-dvh bg-background text-foreground">
+      <a href="#main" className="sr-only rounded-full bg-background px-4 py-2 text-sm font-medium ring-3 ring-ring/50 focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50">Skip to content</a>
       <Nav onStart={onStart} />
-      <main>
+      <main id="main" tabIndex={-1} className="outline-none">
         <Hero onStart={onStart} />
         <section className="mx-auto max-w-[1360px] px-4 pb-24 md:px-10" aria-label="See Orin build an app">
           <LandingDemo />
@@ -47,7 +54,7 @@ function Nav({ onStart }: { onStart: () => void }) {
           <a href="#built" className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground md:inline">How it's built</a>
           <a href={SOURCE} className="hidden text-sm text-muted-foreground transition-colors hover:text-foreground md:inline">Source</a>
           <ThemeToggle />
-          <button onClick={onStart} className="rounded-full border px-4 py-2 text-sm font-medium transition-colors hover:bg-card">Sign in</button>
+          <button onClick={onStart} className={cn(PILL_OUTLINE, 'px-4 py-2 text-sm')}>Sign in</button>
         </div>
       </nav>
     </header>
@@ -81,8 +88,8 @@ function Hero({ onStart }: { onStart: () => void }) {
         Orin is an AI agent that writes real code in a live sandbox. You watch the app appear as it works, then keep steering it.
       </motion.p>
       <motion.div {...word(8)} className="mt-8 flex flex-wrap gap-3">
-        <button onClick={onStart} className="rounded-full bg-primary px-6 py-3 text-[15px] font-semibold text-primary-foreground transition-transform hover:-translate-y-px active:translate-y-0">Start building</button>
-        <a href="#built" className="rounded-full border px-6 py-3 text-[15px] font-medium transition-colors hover:bg-card">See how it's built</a>
+        <button onClick={onStart} className={PILL_SOLID}>Start building</button>
+        <a href="#built" className={cn(PILL_OUTLINE, 'px-6 py-3 text-[15px]')}>See how it's built</a>
       </motion.div>
     </section>
   )
@@ -108,25 +115,39 @@ function CurvedHeadline() {
   const reduced = useReducedMotion()
   const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'end start'] })
   const smooth = useSpring(scrollYProgress, { stiffness: 80, damping: 22, mass: 0.35 })
-  // How far past the path's start the text must travel to clear it: its own length, as a share of
-  // the path's. Measured, because it depends on the font actually loaded.
-  const travel = useRef(170)
+  // Where the text sits along the path at the two ends of the scroll range, as startOffset %: at the
+  // start its first letter is at the screen's right edge, at the end its last letter has just left
+  // the left edge — so it moves for exactly as long as the row is on screen. Measured from the path
+  // and the loaded font, because both edges depend on the viewport (the phone arc is wider than it).
+  const range = useRef({ from: 100, to: -100 })
+  const place = (p: number) => {
+    const { from, to } = range.current
+    along.current?.setAttribute('startOffset', `${from + p * (to - from)}%`)
+  }
 
   useEffect(() => {
     const measure = () => {
-      const t = text.current, p = path.current
-      if (t && p && p.getTotalLength() > 0) travel.current = (t.getComputedTextLength() / p.getTotalLength()) * 100
+      const t = text.current, p = path.current, m = p?.ownerSVGElement?.getScreenCTM()
+      const length = p?.getTotalLength() ?? 0
+      if (!t || !p || !m || !length) return
+      // The arc runs left to right, so its screen x only grows along it: binary-search each edge.
+      const at = (x: number) => {
+        let lo = 0, hi = length
+        for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (p.getPointAtLength(mid).x * m.a + m.e < x) lo = mid; else hi = mid }
+        return lo
+      }
+      const right = at(document.documentElement.clientWidth), left = at(0)
+      range.current = { from: (right / length) * 100, to: ((left - t.getComputedTextLength()) / length) * 100 }
+      place(smooth.get())
     }
     measure()
     document.fonts?.ready.then(measure)
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useMotionValueEvent(smooth, 'change', (p) => {
-    // 100% = parked just past the right end; the far end = its last letter has left on the left.
-    along.current?.setAttribute('startOffset', `${100 - p * (100 + travel.current)}%`)
-  })
+  useMotionValueEvent(smooth, 'change', place)
 
   // Reduce Motion: a sentence that only reads while it moves is no sentence at all — show it plainly.
   if (reduced) {
@@ -181,8 +202,8 @@ function Step({ n, title, body }: { n: string; title: string; body: string }) {
       <div className="flex items-start gap-4">
         <span className="mt-3 font-mono text-sm text-muted-foreground md:mt-5">{n}</span>
         <h3 className="relative">
-          <span className={cn(word, 'block text-foreground/12')}>{title}</span>
-          <motion.span aria-hidden="true" style={reduced ? undefined : { clipPath: clip }} className={cn(word, 'absolute inset-0 block text-foreground')}>{title}</motion.span>
+          <span aria-hidden="true" className={cn(word, 'block text-foreground/12')}>{title}</span>
+          <motion.span style={reduced ? undefined : { clipPath: clip }} className={cn(word, 'absolute inset-0 block text-foreground')}>{title}</motion.span>
         </h3>
       </div>
       <p className="max-w-[40ch] pb-2 text-lg leading-relaxed text-muted-foreground">{body}</p>
@@ -221,9 +242,12 @@ function Different() {
 
 // For the engineers reading: one build round as a branch bloom. The prompt grows a trunk from the
 // browser to the API; the API then blooms — four branches at once, to the model, the sandbox,
-// Postgres and R2, because a round really does touch all four — twigs sprout, each box it reaches
-// ripples, and the preview arcs from the sandbox straight back to the browser. Then it recedes and
-// blooms again. It plays on its own; the faint wiring underneath means it reads with no motion at all.
+// Postgres and R2, because a round really does touch all four — each box it reaches ripples, and the
+// preview arcs from the sandbox straight back to the browser. Then it recedes and blooms again. It
+// plays on its own; the faint wiring underneath means it reads with no motion at all.
+//
+// The branches are computed from the boxes' measured edges, not drawn by hand: the boxes are HTML
+// (their height is their text), so hand-placed paths in a scaled SVG only met them at one width.
 type NodeKey = 'browser' | 'api' | 'llm' | 'sandbox' | 'pg' | 'r2'
 const NODE_TEXT: Record<NodeKey, { t: string; s: string }> = {
   browser: { t: 'Your browser', s: 'React · Vercel' },
@@ -233,68 +257,144 @@ const NODE_TEXT: Record<NodeKey, { t: string; s: string }> = {
   pg: { t: 'Postgres', s: 'saved every round' },
   r2: { t: 'Redis → R2', s: 'git bundle per round' },
 }
+type Edge = { id: string; from: NodeKey; to: NodeKey; label?: string; side?: 'above' | 'left' | 'right'; start: number; end: number; width?: number }
 type Layout = {
   w: number; h: number; nodeW: string
   at: Record<NodeKey, [number, number]>
-  trunk: string
-  branches: string[]                                   // all four bloom at the same instant
-  twigs: { d: string; tip: [number, number] }[]
-  arc: string                                          // sandbox → browser: the live preview
-  labels: { x: number; y: number; t: string; anchor?: 'start' | 'middle' | 'end' }[]
+  // wide: every branch is one curve between facing edges; tall: the API feeds a trunk down the middle
+  shape: 'wide' | 'tall'
+  edges: Edge[]
 }
 const WIDE: Layout = {
-  w: 900, h: 380, nodeW: '19%',
+  w: 900, h: 380, nodeW: '19%', shape: 'wide',
   at: { browser: [120, 190], api: [460, 190], llm: [460, 62], sandbox: [780, 110], pg: [460, 318], r2: [780, 290] },
-  trunk: 'M 208 190 C 262 174, 318 206, 372 190',
-  branches: [
-    'M 460 166 C 446 140, 474 112, 460 86',
-    'M 548 178 C 604 178, 628 122, 692 118',
-    'M 460 214 C 474 240, 446 268, 460 294',
-    'M 548 202 C 604 202, 628 280, 692 282',
-  ],
-  twigs: [
-    { d: 'M 457 128 C 446 120, 438 112, 428 108', tip: [428, 108] },
-    { d: 'M 612 156 C 618 146, 626 142, 638 142', tip: [638, 142] },
-    { d: 'M 463 254 C 474 262, 482 268, 494 272', tip: [494, 272] },
-    { d: 'M 612 226 C 620 238, 628 242, 640 242', tip: [640, 242] },
-    { d: 'M 290 190 C 296 204, 300 210, 308 214', tip: [308, 214] },
-  ],
-  arc: 'M 692 96 Q 430 -118 150 166',
-  labels: [
-    { x: 290, y: 176, t: 'server-sent events', anchor: 'middle' },
-    { x: 474, y: 128, t: 'model calls' },
-    { x: 566, y: 110, t: 'bash_tool' },
-    { x: 300, y: 30, t: 'live preview', anchor: 'middle' },
-    { x: 474, y: 258, t: 'every round' },
-    { x: 578, y: 300, t: 'snapshot queue' },
+  edges: [
+    { id: 'trunk', from: 'browser', to: 'api', label: 'server-sent events', side: 'above', start: 0.04, end: 0.16, width: 2.2 },
+    { id: 'llm', from: 'api', to: 'llm', label: 'model calls', side: 'right', start: 0.16, end: 0.36 },
+    { id: 'sandbox', from: 'api', to: 'sandbox', label: 'bash_tool', side: 'right', start: 0.16, end: 0.36 },
+    { id: 'pg', from: 'api', to: 'pg', label: 'every round', side: 'right', start: 0.16, end: 0.36 },
+    { id: 'r2', from: 'api', to: 'r2', label: 'snapshot queue', side: 'right', start: 0.16, end: 0.36 },
+    { id: 'preview', from: 'sandbox', to: 'browser', label: 'live preview', side: 'above', start: 0.38, end: 0.54 },
   ],
 }
-// Phones: the same tree standing up — browser on top, the API below it, four branches fanning down.
+// Phones: the same tree standing up — browser on top, the API below it, a trunk with four branches.
 const TALL: Layout = {
-  w: 360, h: 600, nodeW: '44%',
+  w: 360, h: 600, nodeW: '44%', shape: 'tall',
   at: { browser: [180, 44], api: [180, 196], llm: [88, 350], sandbox: [272, 350], pg: [88, 520], r2: [272, 520] },
-  trunk: 'M 180 72 C 168 110, 192 140, 180 168',
-  branches: [
-    'M 150 224 C 130 260, 96 280, 88 322',
-    'M 210 224 C 230 260, 264 280, 272 322',
-    'M 164 224 C 150 330, 70 420, 80 492',
-    'M 196 224 C 210 330, 290 420, 280 492',
+  edges: [
+    { id: 'trunk', from: 'browser', to: 'api', label: 'events', side: 'right', start: 0.04, end: 0.16, width: 2.2 },
+    { id: 'llm', from: 'api', to: 'llm', start: 0.16, end: 0.36 },
+    { id: 'sandbox', from: 'api', to: 'sandbox', start: 0.16, end: 0.36 },
+    { id: 'pg', from: 'api', to: 'pg', start: 0.16, end: 0.36 },
+    { id: 'r2', from: 'api', to: 'r2', start: 0.16, end: 0.36 },
+    { id: 'preview', from: 'sandbox', to: 'browser', label: 'preview', side: 'left', start: 0.38, end: 0.54 },
   ],
-  twigs: [
-    { d: 'M 120 262 C 108 258, 100 250, 94 240', tip: [94, 240] },
-    { d: 'M 240 262 C 252 258, 260 250, 266 240', tip: [266, 240] },
-    { d: 'M 176 120 C 190 116, 198 110, 204 102', tip: [204, 102] },
-  ],
-  arc: 'M 330 330 C 372 220, 356 60, 270 44',
-  labels: [
-    { x: 196, y: 128, t: 'events' },
-    { x: 356, y: 200, t: 'preview', anchor: 'end' },
-  ],
+}
+
+type Box = { left: number; right: number; top: number; bottom: number; cx: number; cy: number }
+type Pt = [number, number]
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+const SAMPLES = 40
+const cubic = (p0: Pt, c1: Pt, c2: Pt, p3: Pt) => ({
+  d: `M ${p0[0]} ${p0[1]} C ${c1[0]} ${c1[1]}, ${c2[0]} ${c2[1]}, ${p3[0]} ${p3[1]}`,
+  pts: Array.from({ length: SAMPLES + 1 }, (_, i) => {
+    const t = i / SAMPLES, u = 1 - t, k = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t]
+    return [k[0] * p0[0] + k[1] * c1[0] + k[2] * c2[0] + k[3] * p3[0], k[0] * p0[1] + k[1] * c1[1] + k[2] * c2[1] + k[3] * p3[1]] as Pt
+  }),
+})
+const polyline = (pts: Pt[]) => {
+  const out: Pt[] = []
+  for (let i = 0; i < pts.length - 1; i++) for (let j = 0; j < SAMPLES / (pts.length - 1); j++) {
+    const t = j / (SAMPLES / (pts.length - 1)); out.push([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t])
+  }
+  return [...out, pts[pts.length - 1]]
+}
+// One curve from box a to box b: it leaves a's edge facing b at a right angle and lands square on
+// b's facing edge, so a pair that lines up is a straight line and the rest are a single smooth bend.
+function between(a: Box, b: Box) {
+  const inset = 10
+  if (b.left > a.right || b.right < a.left) {
+    const dir = Math.sign(b.cx - a.cx)
+    const p0: Pt = [dir > 0 ? a.right : a.left, clamp(b.cy, a.top + inset, a.bottom - inset)]
+    const p3: Pt = [dir > 0 ? b.left : b.right, clamp(a.cy, b.top + inset, b.bottom - inset)]
+    const h = Math.abs(p3[0] - p0[0]) / 2
+    return cubic(p0, [p0[0] + dir * h, p0[1]], [p3[0] - dir * h, p3[1]], p3)
+  }
+  const dir = Math.sign(b.cy - a.cy)
+  const p0: Pt = [clamp(b.cx, a.left + inset, a.right - inset), dir > 0 ? a.bottom : a.top]
+  const p3: Pt = [clamp(a.cx, b.left + inset, b.right - inset), dir > 0 ? b.top : b.bottom]
+  const h = Math.abs(p3[1] - p0[1]) / 2
+  return cubic(p0, [p0[0], p0[1] + dir * h], [p3[0], p3[1] - dir * h], p3)
+}
+function route(L: Layout, e: Edge, r: Record<NodeKey, Box>) {
+  const a = r[e.from], b = r[e.to]
+  if (e.id === 'preview') {
+    if (L.shape === 'wide') {
+      // over the top: up out of the sandbox, clear of every box, down into the browser
+      const peak = Math.min(...Object.values(r).map((x) => x.top)) - 64
+      return cubic([a.cx, a.top], [a.cx, peak], [b.cx, peak], [b.cx, b.top])
+    }
+    // phones: out of the sandbox's right side, up the margin, into the browser's right side
+    const x = a.right + 14
+    return cubic([a.right, a.cy], [x, a.cy], [x, b.cy], [b.right, b.cy])
+  }
+  if (L.shape === 'tall' && e.from === 'api') {
+    // the trunk runs down the gap between the two columns; each box branches off it, square on
+    const trunk = (r.llm.right + r.sandbox.left) / 2, rad = 10
+    const toRight = b.cx > trunk, edge = toRight ? b.left : b.right, s = toRight ? 1 : -1
+    return {
+      d: `M ${trunk} ${a.bottom} L ${trunk} ${b.cy - rad} Q ${trunk} ${b.cy} ${trunk + s * rad} ${b.cy} L ${edge} ${b.cy}`,
+      pts: polyline([[trunk, a.bottom], [trunk, b.cy], [edge, b.cy]]),
+    }
+  }
+  return between(a, b)
+}
+const LABEL_AT = {
+  above: { dx: 0, dy: -9, anchor: 'middle' }, below: { dx: 0, dy: 17, anchor: 'middle' },
+  right: { dx: 9, dy: 4, anchor: 'start' }, left: { dx: -9, dy: 4, anchor: 'end' },
+  aboveRight: { dx: 6, dy: -8, anchor: 'start' }, aboveLeft: { dx: -6, dy: -8, anchor: 'end' },
+  belowRight: { dx: 6, dy: 16, anchor: 'start' }, belowLeft: { dx: -6, dy: 16, anchor: 'end' },
+} as const
+type Side = keyof typeof LABEL_AT
+// Labels are mono at 10.5px, so their size is known from their length. Each one tries spots along its
+// own branch, on each side, and takes the first that's clear of every box, every line and every other
+// label — the curves change shape with the width, so no single fixed spot works everywhere.
+function placeLabels(edges: { e: Edge; pts: Pt[] }[], boxes: Box[], width: number) {
+  const placed: { x: number; y: number; anchor: (typeof LABEL_AT)[Side]['anchor']; text: string; id: string; rect: [number, number, number, number] }[] = []
+  const lines = edges.flatMap((g) => g.pts)
+  const clear = ([l, t, r, b]: [number, number, number, number]) =>
+    l >= 0 && r <= width
+    && boxes.every((x) => r + 4 < x.left || l - 4 > x.right || b + 4 < x.top || t - 4 > x.bottom)
+    && placed.every(({ rect: [pl, pt, pr, pb] }) => r + 6 < pl || l - 6 > pr || b + 4 < pt || t - 4 > pb)
+    && lines.every(([x, y]) => x < l - 3 || x > r + 3 || y < t - 3 || y > b + 3)
+  for (const { e, pts } of edges) {
+    if (!e.label) continue
+    const w = e.label.length * 6.3
+    const sides: Side[] = [e.side ?? 'above', 'right', 'left', 'above', 'below', 'aboveRight', 'aboveLeft', 'belowRight', 'belowLeft']
+    let best: (typeof placed)[number] | null = null
+    for (const t of [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.15, 0.85]) {
+      for (const side of sides) {
+        const [px, py] = pts[Math.round(t * SAMPLES)], at = LABEL_AT[side], x = px + at.dx, y = py + at.dy
+        const l = at.anchor === 'start' ? x : at.anchor === 'end' ? x - w : x - w / 2
+        const rect: [number, number, number, number] = [l, y - 9, l + w, y + 3]
+        if (clear(rect)) { best = { x, y, anchor: at.anchor, text: e.label, id: e.id, rect }; break }
+      }
+      if (best) break
+    }
+    // Never drop a label: with nowhere clear, it takes its preferred spot (the layout test flags it).
+    if (!best) {
+      const [px, py] = pts[SAMPLES / 2], at = LABEL_AT[e.side ?? 'above'], x = px + at.dx, y = py + at.dy
+      const l = at.anchor === 'start' ? x : at.anchor === 'end' ? x - w : x - w / 2
+      best = { x, y, anchor: at.anchor, text: e.label, id: e.id, rect: [l, y - 9, l + w, y + 3] }
+    }
+    placed.push(best)
+  }
+  return placed
 }
 
 // One loop, in fractions of it. Everything shares these, which is what makes the bloom synchronous.
 const LOOP = 6.5
-const T = { origin: 0.04, api: 0.16, bloom: 0.36, twig: 0.42, preview: 0.54, hold: 0.8, gone: 0.92 }
+const T = { origin: 0.04, api: 0.16, bloom: 0.36, preview: 0.54, hold: 0.8, gone: 0.92 }
 const grow = (start: number, end: number) => ({
   pathLength: [0, 0, 1, 1, 0, 0],
   opacity: [0, 1, 1, 1, 0, 0],
@@ -328,7 +428,7 @@ function HowItsBuilt() {
         <ul className="mt-14 flex flex-wrap gap-2">
           {STACK.map((t) => <li key={t} className="rounded-full border px-3 py-1 font-mono text-xs text-muted-foreground">{t}</li>)}
         </ul>
-        <a href={SOURCE} className="mt-10 inline-flex items-center gap-2 rounded-full border px-5 py-2.5 text-sm font-medium transition-colors hover:bg-card">
+        <a href={SOURCE} className={cn(PILL_OUTLINE, 'mt-10 px-5 py-2.5 text-sm')}>
           <GithubMark />Read the source on GitHub
         </a>
       </div>
@@ -351,28 +451,41 @@ function Bloom({ layout: L, still }: { layout: Layout; still: boolean }) {
   // Only loops while on screen; under Reduce Motion it's the fully bloomed tree, standing still.
   const inView = useInView(ref, { amount: 0.25 })
   const play = inView && !still
-  const all = [L.trunk, ...L.branches, ...L.twigs.map((t) => t.d), L.arc]
-  const drawn = (d: string, start: number, end: number, width = 1.8) =>
-    play
-      ? <motion.path key={d} d={d} fill="none" className="stroke-primary" strokeWidth={width} strokeLinecap="round" initial={{ pathLength: 0, opacity: 0 }} animate={grow(start, end)} />
-      : <path key={d} d={d} fill="none" className="stroke-primary" strokeWidth={width} strokeLinecap="round" opacity={still ? 0.85 : 0} />
+  const [geo, setGeo] = useState<{ paths: { id: string; d: string; e: Edge }[]; labels: ReturnType<typeof placeLabels> } | null>(null)
+
+  // Measured, so the branches meet the boxes at every width: on resize, and again once the fonts
+  // (which set the boxes' height) have loaded. The observer's first callback is the first measure.
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const measure = () => {
+      const base = el.getBoundingClientRect(), r = {} as Record<NodeKey, Box>
+      el.querySelectorAll<HTMLElement>('[data-node]').forEach((n) => {
+        const b = n.getBoundingClientRect(), x = b.left - base.left, y = b.top - base.top
+        r[n.dataset.node as NodeKey] = { left: x, right: x + b.width, top: y, bottom: y + b.height, cx: x + b.width / 2, cy: y + b.height / 2 }
+      })
+      const routed = L.edges.map((e) => ({ id: e.id, e, ...route(L, e, r) }))
+      setGeo({ paths: routed, labels: placeLabels(routed, Object.values(r), base.width) })
+    }
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    document.fonts?.ready.then(measure)
+    return () => ro.disconnect()
+  }, [L])
 
   return (
     <div ref={ref} className="relative mx-auto w-full max-w-[1100px]" style={{ aspectRatio: `${L.w} / ${L.h}` }}>
-      <svg viewBox={`0 0 ${L.w} ${L.h}`} className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
-        {/* the wiring, always there */}
-        {all.map((d) => <path key={`base-${d}`} d={d} fill="none" className="stroke-border" strokeWidth="1.2" strokeDasharray="3 5" />)}
-        {L.labels.map((l) => <text key={l.t} x={l.x} y={l.y} textAnchor={l.anchor ?? 'start'} className="fill-muted-foreground font-mono text-[10.5px]">{l.t}</text>)}
-        {/* the bloom: trunk, then four branches at once, then twigs, then the preview arcing home */}
-        {drawn(L.trunk, T.origin, T.api, 2.2)}
-        {L.branches.map((d) => drawn(d, T.api, T.bloom))}
-        {L.twigs.map((t) => drawn(t.d, T.bloom - 0.06, T.twig, 1.3))}
-        {drawn(L.arc, T.bloom + 0.02, T.preview)}
-        {L.twigs.map((t) => play
-          ? <motion.circle key={`tip-${t.d}`} cx={t.tip[0]} cy={t.tip[1]} r="3" className="fill-primary" initial={{ scale: 0 }}
-              animate={{ scale: [0, 0, 1, 1, 0, 0], transition: { duration: LOOP, times: [0, T.twig - 0.02, T.twig + 0.03, T.hold, T.gone, 1], repeat: Infinity } }} />
-          : <circle key={`tip-${t.d}`} cx={t.tip[0]} cy={t.tip[1]} r="3" className="fill-primary" opacity={still ? 0.85 : 0} />)}
-      </svg>
+      {geo && (
+        <svg className="absolute inset-0 h-full w-full overflow-visible" aria-hidden="true">
+          {/* the wiring, always there */}
+          {geo.paths.map((g) => <path key={`base-${g.id}`} d={g.d} fill="none" className="stroke-border" strokeWidth="1.2" strokeDasharray="3 5" />)}
+          {geo.labels.map((l) => <text key={`label-${l.id}`} x={l.x} y={l.y} textAnchor={l.anchor} className="fill-muted-foreground font-mono text-[10.5px]">{l.text}</text>)}
+          {/* the bloom: the trunk, then four branches at once, then the preview arcing home */}
+          {geo.paths.map((g) => play
+            ? <motion.path key={g.id} d={g.d} fill="none" className="stroke-primary" strokeWidth={g.e.width ?? 1.8} strokeLinecap="round" initial={{ pathLength: 0, opacity: 0 }} animate={grow(g.e.start, g.e.end)} />
+            : <path key={g.id} d={g.d} fill="none" className="stroke-primary" strokeWidth={g.e.width ?? 1.8} strokeLinecap="round" opacity={still ? 0.85 : 0} />)}
+        </svg>
+      )}
       {(Object.keys(L.at) as NodeKey[]).map((k) => (
         <BloomNode key={k} k={k} x={(L.at[k][0] / L.w) * 100} y={(L.at[k][1] / L.h) * 100} width={L.nodeW} play={play} still={still} />
       ))}
@@ -386,7 +499,7 @@ function BloomNode({ k, x, y, width, play, still }: { k: NodeKey; x: number; y: 
   // A ripple as the branch arrives — and for the browser, a second one when the preview lands.
   const ripple = (at: number) => ({ scale: [1, 1, 1.14, 1.14], opacity: [0, 0.9, 0, 0], transition: { duration: LOOP, times: [0, at, Math.min(at + 0.12, 0.99), 1], repeat: Infinity, ease: 'easeOut' as const } })
   return (
-    <div className="absolute -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card px-3 py-2.5 md:px-3.5 md:py-3" style={{ left: `${x}%`, top: `${y}%`, width }}>
+    <div data-node={k} className="absolute -translate-x-1/2 -translate-y-1/2 rounded-xl border bg-card px-3 py-2.5 md:px-3.5 md:py-3" style={{ left: `${x}%`, top: `${y}%`, width }}>
       {play && <>
         <motion.span initial={{ opacity: 0 }} animate={lit} className="pointer-events-none absolute -inset-px rounded-xl border border-primary shadow-[0_0_28px_-8px] shadow-primary/60" />
         <motion.span initial={{ opacity: 0 }} animate={ripple(a)} className="pointer-events-none absolute -inset-px rounded-xl border border-primary" />
@@ -411,7 +524,7 @@ function Closing({ onStart }: { onStart: () => void }) {
         <p className="mt-5 max-w-[34rem] text-lg leading-relaxed text-muted-foreground">
           Sign in with GitHub, add a key for DeepSeek, OpenAI, Gemini or Claude, and describe your first app.
         </p>
-        <button onClick={onStart} className="mt-8 rounded-full bg-primary px-6 py-3 text-[15px] font-semibold text-primary-foreground transition-transform hover:-translate-y-px">Start building</button>
+        <button onClick={onStart} className={cn(PILL_SOLID, 'mt-8')}>Start building</button>
       </div>
     </section>
   )
