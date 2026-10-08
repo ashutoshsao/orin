@@ -65,18 +65,18 @@
     --card-foreground: #1C1814;
     --popover: #FFFCF6;
     --popover-foreground: #1C1814;
-    --primary: #C2552D;
+    --primary: #B54D27;
     --primary-foreground: #FFFCF6;
     --secondary: #EDE7DB;
     --secondary-foreground: #1C1814;
     --muted: #EDE7DB;
-    --muted-foreground: #8B8378;
+    --muted-foreground: #6F675D;
     --accent: #EDE7DB;
     --accent-foreground: #1C1814;
     --destructive: oklch(0.577 0.245 27.325);
     --border: #E4DDD0;
     --input: #E4DDD0;
-    --ring: #C2552D;
+    --ring: #B54D27;
     --chart-1: oklch(0.87 0 0);
     --chart-2: oklch(0.556 0 0);
     --chart-3: oklch(0.439 0 0);
@@ -130,7 +130,7 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
     }
   body {
     @apply bg-background text-foreground;
