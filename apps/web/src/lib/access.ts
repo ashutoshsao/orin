@@ -21,6 +21,13 @@ export type Byok = { needsKey: boolean; key: { provider: string; model?: string 
 export function useAccess(signedIn: boolean) {
   const [access, setAccess] = useState<Access | null | undefined>(undefined)
   const [byok, setByok] = useState<Byok | null>(null)
+  // Signing out forgets the old account's access, so the next sign-in starts from "loading"
+  // rather than flashing the previous account's tier. Reset during render, not in an effect.
+  const [wasSignedIn, setWasSignedIn] = useState(signedIn)
+  if (signedIn !== wasSignedIn) {
+    setWasSignedIn(signedIn)
+    if (!signedIn) { setAccess(undefined); setByok(null) }
+  }
   const refresh = useCallback(() => {
     fetch(`${API}/me`, authed)
       .then((res) => (res.ok ? res.json() : { access: null, byok: null }))
@@ -29,7 +36,6 @@ export function useAccess(signedIn: boolean) {
   }, [])
   useEffect(() => {
     if (signedIn) refresh()
-    else setAccess(undefined)
   }, [signedIn, refresh])
   return { access, byok, refresh }
 }
