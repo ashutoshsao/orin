@@ -54,7 +54,13 @@ export function LandingDemo() {
   const desktop = useMediaQuery('(min-width: 768px)')
   const rootRef = useRef<HTMLDivElement>(null)
   const inView = useInView(rootRef, { amount: 0.45, once: true })
-  const [started, setStarted] = useState(false)
+  const [timedOut, setTimedOut] = useState(false)
+  const started = inView || timedOut
+  // Playback holds still while the demo is off screen: nobody is watching, and its re-renders (the
+  // prompt types itself at ~37 updates a second) would otherwise compete with scrolling elsewhere.
+  const onScreen = useInView(rootRef)
+  const onScreenRef = useRef(onScreen)
+  useEffect(() => { onScreenRef.current = onScreen }, [onScreen])
 
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [typed, setTyped] = useState<string | null>(null)   // null = composer idle
@@ -64,17 +70,30 @@ export function LandingDemo() {
 
   // Start when it's actually seen. The fallback is insurance: an observer that never fires must
   // not leave the demo frozen (the idle window is visible either way).
-  useEffect(() => { if (inView) setStarted(true) }, [inView])
-  useEffect(() => { const t = setTimeout(() => setStarted(true), 9000); return () => clearTimeout(t) }, [])
+  useEffect(() => { const t = setTimeout(() => setTimedOut(true), 9000); return () => clearTimeout(t) }, [])
+  // Load the built site while the browser is idle after the page loads, not when the demo first
+  // reveals it. It shares this page's main thread, so its parse + layout (~100 ms) used to land
+  // mid-scroll, whenever the visitor happened to reach the demo (spec 11).
+  const [warm, setWarm] = useState(false)
+  useEffect(() => {
+    const ric = window.requestIdleCallback
+    if (ric) { const id = ric(() => setWarm(true), { timeout: 2500 }); return () => window.cancelIdleCallback(id) }
+    const t = setTimeout(() => setWarm(true), 1500) // Safari has no requestIdleCallback
+    return () => clearTimeout(t)
+  }, [])
+  // Reduce Motion shows the finished build instead of playing it.
+  const [done] = useState(finished)
 
   useEffect(() => {
-    if (!started) return
-    if (reduced) {
-      setEvents(finished()); setStage(3); setTyped(null)
-      return
-    }
+    if (!started || reduced) return
     let alive = true
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    // Every beat of the script goes through here, so pausing it here pauses the whole demo, mid-word
+    // if need be, and it picks up where it left off when scrolled back.
+    const sleep = async (ms: number) => {
+      await wait(ms)
+      while (alive && !onScreenRef.current) await wait(250)
+    }
     const emit = (e: AgentEvent) => setEvents((prev) => [...prev, live(e)])
 
     async function play() {
@@ -118,11 +137,14 @@ export function LandingDemo() {
     return () => { alive = false }
   }, [started, reduced])
 
-  const status = runStatus(events, { pending: false, hasPreview: stage > 0, online: true })
-  const trouble = appTrouble(events)
-  const steps = events.filter((e) => e.event === 'llm_call').length
-  const snaps = events.filter((e) => e.event === 'snapshot').length
-  const view = { events, typed, pressed, stage, showcase, started, status, trouble, left: TRIAL_STEPS - steps, snaps }
+  const still = !!reduced && started
+  const shown = still ? done : events
+  const shownStage = still ? 3 : stage
+  const status = runStatus(shown, { pending: false, hasPreview: shownStage > 0, online: true })
+  const trouble = appTrouble(shown)
+  const steps = shown.filter((e) => e.event === 'llm_call').length
+  const snaps = shown.filter((e) => e.event === 'snapshot').length
+  const view = { events: shown, typed: still ? null : typed, pressed, stage: shownStage, showcase, loadSite: started || warm, status, trouble, left: TRIAL_STEPS - steps, snaps }
 
   return (
     <div ref={rootRef}>
@@ -137,7 +159,7 @@ export function LandingDemo() {
 }
 
 type View = {
-  events: AgentEvent[]; typed: string | null; pressed: boolean; stage: number; showcase: boolean; started: boolean
+  events: AgentEvent[]; typed: string | null; pressed: boolean; stage: number; showcase: boolean; loadSite: boolean
   status: ReturnType<typeof runStatus>; trouble: ReturnType<typeof appTrouble>; left: number; snaps: number
 }
 
@@ -236,7 +258,7 @@ function Feed({ events, status }: { events: AgentEvent[]; status: View['status']
 function Timed({ ts, children, bubble }: { ts: unknown; children: React.ReactNode; bubble?: boolean }) {
   return (
     <motion.div initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="grid grid-cols-[44px_minmax(0,1fr)] items-start">
-      <span className={cn('font-mono text-[11px] text-muted-foreground/70', bubble ? 'pt-3' : 'pt-1')}>{clockTime(ts)}</span>
+      <span className={cn('font-mono text-[11px] text-muted-foreground', bubble ? 'pt-3' : 'pt-1')}>{clockTime(ts)}</span>
       <div className="min-w-0">{children}</div>
     </motion.div>
   )
@@ -250,7 +272,7 @@ function Group({ events, working }: { events: AgentEvent[]; working: boolean }) 
           ? <span className="size-[7px] animate-pulse rounded-full bg-primary shadow-[0_0_0_4px] shadow-primary/20" />
           : <ChevronRight className="size-3" />}
         {working && <span className="text-foreground">working</span>}
-        <span className={cn(working && 'text-muted-foreground/80')}>{working ? `· ${summarizeActivity(events)}` : summarizeActivity(events)}</span>
+        <span className={cn(working && 'text-muted-foreground')}>{working ? `· ${summarizeActivity(events)}` : summarizeActivity(events)}</span>
       </p>
       <AnimatePresence initial={false}>
         {working && (
@@ -279,7 +301,7 @@ function Composer({ typed, pressed, left, compact }: { typed: string | null; pre
       <div className="flex items-center gap-2.5 rounded-2xl border bg-card py-2 pr-2 pl-4 shadow-[0_10px_28px_-18px_rgb(60_40_20/0.3)] dark:shadow-none">
         <span className="min-w-0 flex-1 truncate text-[14px]">
           {typed === null
-            ? <span className="text-muted-foreground/80">Ask for a change…</span>
+            ? <span className="text-muted-foreground">Ask for a change…</span>
             : <>{typed}<span className="ml-px inline-block h-[1.05em] w-[1.5px] animate-pulse bg-foreground align-[-0.15em]" /></>}
         </span>
         <span className={cn('rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground transition-transform duration-100', pressed && 'scale-90')}>Send</span>
@@ -305,9 +327,9 @@ function PreviewCard(v: View) {
         </div>
       </div>
       <div className="relative flex-1 overflow-hidden bg-white">
-        {v.started && <RealSite stage={v.stage} broken={v.trouble !== null} showcase={v.showcase} />}
+        {v.loadSite && <RealSite stage={v.stage} broken={v.trouble !== null} showcase={v.showcase} />}
         <div className={cn('absolute inset-0 bg-card transition-opacity duration-300', v.stage > 0 ? 'pointer-events-none opacity-0' : 'opacity-100')}>
-          <DotField className="text-muted-foreground" />
+          <DotField className="text-muted-foreground" paused={v.stage > 0} />
           <p className="absolute inset-x-0 bottom-4 text-center font-mono text-xs text-muted-foreground">Building your app</p>
         </div>
         <AnimatePresence>{v.trouble && <PreviewTrouble key={v.trouble} state={v.trouble} />}</AnimatePresence>
@@ -358,7 +380,6 @@ function RealSite({ stage, broken, showcase }: { stage: number; broken: boolean;
           src="/demo-app/index.html"
           title="A site Orin built"
           tabIndex={-1}
-          loading="lazy"
           className="pointer-events-none absolute top-0 left-0 origin-top-left border-0"
           style={{ width: base, height: size.h / scale, transform: `scale(${scale})` }}
         />
