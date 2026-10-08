@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
@@ -5,7 +6,10 @@ import { cn } from '@/lib/utils'
 // The agent writes markdown ("**Features**", bullet lists, `code`). Rendering it as raw
 // text was the most visible rough edge in the feed. Elements are mapped explicitly
 // rather than using a prose plugin so the output stays in the sidebar's type scale.
-export function Markdown({ children, className }: { children: string; className?: string }) {
+//
+// Memoised: the builder re-renders its whole feed on every streamed event, and re-parsing every
+// earlier answer each time made each event cost more the longer the conversation got (spec 11).
+export const Markdown = memo(function Markdown({ children, className }: { children: string; className?: string }) {
   return (
     <div className={cn('text-sm leading-relaxed [&>*+*]:mt-3', className)}>
       <ReactMarkdown
@@ -32,8 +36,9 @@ export function Markdown({ children, className }: { children: string; className?
               ? <code className="font-mono text-xs">{children}</code>
               : <code className="rounded bg-muted px-1 py-0.5 font-mono text-[0.8em]">{children}</code>
           },
+          // A long line scrolls sideways; tabIndex lets a keyboard user reach it and scroll with the arrows.
           pre: ({ children }) => (
-            <pre className="overflow-x-auto rounded-lg border bg-muted/50 p-3">{children}</pre>
+            <pre tabIndex={0} className="overflow-x-auto rounded-lg border bg-muted/50 p-3 outline-none focus-visible:ring-3 focus-visible:ring-ring/50">{children}</pre>
           ),
           hr: () => <hr className="border-border" />,
           blockquote: ({ children }) => (
@@ -45,4 +50,4 @@ export function Markdown({ children, className }: { children: string; className?
       </ReactMarkdown>
     </div>
   )
-}
+})
