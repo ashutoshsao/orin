@@ -3,8 +3,10 @@ import { authClient } from '@/authClient'
 import { API, authed, postJSON, timeAgo, type Project } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { InputGroup, InputGroupAddon, InputGroupTextarea } from '@/components/ui/input-group'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { Kbd, Wordmark } from '@/components/brand'
+import { Wordmark } from '@/components/brand'
+import { Kbd, KbdGroup } from '@/components/ui/kbd'
 import { stepsLeftLabel, type Access, type Byok } from '@/lib/access'
 import { ByokKeyForm } from '@/components/ByokKeyForm'
 
@@ -74,26 +76,26 @@ export function ProjectsScreen({ access, byok, onAccessChange, onOpen }: {
             <ByokKeyForm onSaved={onAccessChange} />
           </div>
         ) : (
-        <form
-          onSubmit={(e) => { e.preventDefault(); create() }}
-          className="mt-11 w-full rounded-[18px] border bg-card text-left shadow-[0_1px_0_rgb(28_24_20/0.04),0_18px_40px_-18px_rgb(60_40_20/0.28)] transition-colors focus-within:border-ring dark:shadow-[0_24px_48px_-24px_rgb(0_0_0/0.8)]"
-        >
-          <textarea
+        <form onSubmit={(e) => { e.preventDefault(); create() }} className="mt-11 w-full text-left">
+          <InputGroup className="rounded-[18px] bg-card shadow-[0_1px_0_rgb(28_24_20/0.04),0_18px_40px_-18px_rgb(60_40_20/0.28)] dark:bg-card dark:shadow-[0_24px_48px_-24px_rgb(0_0_0/0.8)]">
+          <InputGroupTextarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) create() }}
             rows={3}
             autoFocus
             disabled={outOfSteps}
+            aria-label="Describe the app to build"
             placeholder={outOfSteps ? 'No steps left in this trial' : 'A habit tracker with streaks and a calm weekly view…'}
-            className="w-full resize-none bg-transparent px-6 pt-5 pb-2 text-[17px] leading-relaxed outline-none placeholder:text-muted-foreground/80 disabled:cursor-not-allowed"
+            className="field-sizing-fixed px-6 pt-5 pb-2 text-[17px] leading-relaxed md:text-[17px]"
           />
-          <div className="flex items-center justify-end gap-2.5 px-3.5 pb-3.5">
-            <span className="flex items-center gap-1"><Kbd>⌘</Kbd><Kbd>↵</Kbd></span>
-            <Button type="submit" className="rounded-lg px-3.5 font-semibold" disabled={!prompt.trim() || creating || outOfSteps}>
+          <InputGroupAddon align="block-end" className="justify-end gap-2.5 px-3.5 pb-3.5">
+            <KbdGroup><Kbd>⌘</Kbd><Kbd>↵</Kbd></KbdGroup>
+            <Button type="submit" className="px-3.5 font-semibold" disabled={!prompt.trim() || creating || outOfSteps}>
               {creating ? 'Starting…' : 'Build'}
             </Button>
-          </div>
+          </InputGroupAddon>
+          </InputGroup>
         </form>
         )}
       </section>
@@ -112,7 +114,7 @@ export function ProjectsScreen({ access, byok, onAccessChange, onOpen }: {
               <li key={p.id} className="border-t first:border-t-0">
                 <button
                   onClick={() => onOpen(p)}
-                  className="flex w-full items-baseline justify-between gap-4 px-0.5 py-[15px] text-left transition-colors hover:text-primary"
+                  className="flex w-full items-baseline justify-between gap-4 rounded-sm px-0.5 py-[15px] text-left transition-colors hover:text-primary outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <span className="truncate text-[15px]">{p.name}</span>
                   <span className="shrink-0 text-[13px] text-muted-foreground">{timeAgo(p.createdAt)}</span>

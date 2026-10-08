@@ -3,6 +3,7 @@ import { KeyRound } from 'lucide-react'
 import { API, authed, postJSON } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 type ModelChoice = { id: string; label: string; unverified?: boolean }
 type ProviderChoice = { id: string; label: string; models: ModelChoice[] }
@@ -51,52 +52,56 @@ export function ByokKeyForm({ onSaved }: { onSaved: () => void }) {
         Orin builds with your key and never stores it — it's held for this session only.
       </p>
 
-      <div className="mt-4 flex flex-wrap gap-1.5">
-        {providers.map((p) => (
-          <Button
-            key={p.id}
-            type="button"
-            variant={p.id === provider ? 'default' : 'outline'}
-            size="sm"
-            className="rounded-lg"
-            onClick={() => { setProvider(p.id); setModel('') }}
-          >
-            {p.label}
-          </Button>
-        ))}
-      </div>
+      {/* One provider is always chosen: pressing the chosen one again (an empty value) is ignored. */}
+      <ToggleGroup
+        aria-label="Provider"
+        value={[provider]}
+        onValueChange={(v) => { if (v[0]) { setProvider(v[0]); setModel('') } }}
+        variant="primary"
+        size="sm"
+        spacing={1.5}
+        className="mt-4 flex-wrap"
+      >
+        {providers.map((p) => <ToggleGroupItem key={p.id} value={p.id}>{p.label}</ToggleGroupItem>)}
+      </ToggleGroup>
 
       <div className="mt-3 space-y-2">
         <Input
           type="password"
           autoComplete="off"
+          aria-label="API key"
           placeholder="Paste your API key"
           value={apiKey}
           onChange={(e) => setApiKey(e.target.value)}
         />
         <Input
+          aria-label="Model"
           placeholder={models[0] ? `Model (default: ${models[0].id})` : 'Model name'}
           value={model}
           onChange={(e) => setModel(e.target.value)}
         />
         {models.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
+          // Suggestions for the box above: one is pressed when it's what the box says; none when typed by hand.
+          <ToggleGroup
+            aria-label="Suggested models"
+            value={model ? [model] : []}
+            onValueChange={(v) => setModel(v[0] ?? '')}
+            variant="outline"
+            size="sm"
+            spacing={1.5}
+            className="flex-wrap"
+          >
             {models.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setModel(m.id)}
-                className="rounded-md border px-2 py-1 font-mono text-[11px] text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
-              >
+              <ToggleGroupItem key={m.id} value={m.id} className="h-6 px-2 font-mono text-[11px] text-muted-foreground aria-pressed:text-foreground">
                 {m.label}
-              </button>
+              </ToggleGroupItem>
             ))}
-          </div>
+          </ToggleGroup>
         )}
       </div>
 
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
-      <Button type="submit" className="mt-4 w-full rounded-lg" disabled={busy || apiKey.trim().length < 8}>
+      <Button type="submit" className="mt-4 w-full" disabled={busy || apiKey.trim().length < 8}>
         {busy ? 'Checking the key…' : 'Start building'}
       </Button>
     </form>

@@ -20,15 +20,6 @@ export function Wordmark({ className }: { className?: string }) {
   )
 }
 
-// A keyboard key, as in "⌘ ↵" hints — raised by a slightly heavier bottom border.
-export function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded-[5px] border border-b-2 px-1.5 py-px font-mono text-[11px] leading-4 text-muted-foreground">
-      {children}
-    </kbd>
-  )
-}
-
 // GitHub's mark, inline: lucide-react dropped brand icons, and this is the one brand
 // glyph the app needs (the sign-in button). Draws in currentColor like the rest.
 export function GithubMark({ className }: { className?: string }) {

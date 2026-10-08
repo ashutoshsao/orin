@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, CircleAlert, ExternalLink, History, PlugZap, RotateCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnimatePresence, motion } from 'motion/react'
@@ -7,12 +7,16 @@ import { activityLine, appTrouble, errorText, eventKind, groupFeed, runStatus, s
 import { Markdown } from '@/components/markdown'
 import { PreviewTrouble } from '@/components/PreviewTrouble'
 import { DotField } from '@/components/DotField'
-import { BuilderSheet } from '@/components/BuilderSheet'
-import { Kbd } from '@/components/brand'
+import { Kbd } from '@/components/ui/kbd'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { cn } from '@/lib/utils'
+
+// Phones only: desktop never uses the sheet, so it shouldn't download vaul with the builder.
+const BuilderSheet = lazy(() => import('@/components/BuilderSheet').then((m) => ({ default: m.BuilderSheet })))
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { stepsLeftLabel, type Access } from '@/lib/access'
 import {
@@ -225,39 +229,26 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   // top bar, the app in the middle, the conversation in a sheet. On desktop they stack in the
   // one column, which is why this used to be a single block.
   const chatHeader = (
-    <>
+    <Collapsible open={showHistory} onOpenChange={setShowHistory}>
           <header className="flex items-center justify-between gap-3 px-4 pt-5 pb-4">
             <div className="flex min-w-0 items-center gap-1.5">
               <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={onBack} aria-label="Back to projects">
                 <ChevronLeft />
               </Button>
-              <span className="truncate font-display text-[22px] leading-none tracking-[-0.01em]">{project.name}</span>
+              <h1 className="truncate font-display text-[22px] leading-none font-normal tracking-[-0.01em]">{project.name}</h1>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {snapshots.length > 0 && (
-                <button
-                  onClick={() => setShowHistory((v) => !v)}
-                  aria-expanded={showHistory}
-                  className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground aria-expanded:text-foreground"
-                >
+                <CollapsibleTrigger className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 aria-expanded:text-foreground">
                   <History className="size-3.5" />
                   {snapshots.length} {snapshots.length === 1 ? 'snapshot' : 'snapshots'}
-                </button>
+                </CollapsibleTrigger>
               )}
               <ThemeToggle />
             </div>
           </header>
 
-          <AnimatePresence initial={false}>
-            {showHistory && (
-              <motion.div
-                key="history"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2, ease: 'easeOut' }}
-                className="overflow-hidden border-y bg-card/60"
-              >
+          <CollapsibleContent className="border-y bg-card/60">
                 <div className="px-6 py-3">
                   <p className="text-xs text-muted-foreground">Rewind to an earlier point. Work after it is discarded.</p>
                   <ul className="mt-2.5 space-y-1">
@@ -278,11 +269,8 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
                     })}
                   </ul>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-    </>
+          </CollapsibleContent>
+    </Collapsible>
   )
 
   const chatLog = (
@@ -345,38 +333,45 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
                 {pending.options.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {pending.options.map((opt) => (
-                      <Button key={opt} variant="outline" size="sm" className="rounded-lg" onClick={() => submitAnswer(opt)}>{opt}</Button>
+                      <Button key={opt} variant="outline" size="sm" onClick={() => submitAnswer(opt)}>{opt}</Button>
                     ))}
                   </div>
                 )}
-                <form onSubmit={(ev) => { ev.preventDefault(); submitAnswer(answer) }} className="flex items-center gap-2.5">
-                  <input
-                    value={answer}
-                    onChange={(ev) => setAnswer(ev.target.value)}
-                    placeholder="Or say it in your own words…"
-                    autoFocus
-                    className="min-w-0 flex-1 bg-transparent text-base outline-none md:text-[15px] placeholder:text-muted-foreground/80"
-                  />
-                  <Kbd>↵</Kbd>
-                  <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!answer.trim()}>Send</Button>
+                <form onSubmit={(ev) => { ev.preventDefault(); submitAnswer(answer) }}>
+                  <InputGroup className="h-auto rounded-xl bg-background py-1.5 pr-1.5 pl-3 dark:bg-background">
+                    <InputGroupInput
+                      value={answer}
+                      onChange={(ev) => setAnswer(ev.target.value)}
+                      aria-label="Your answer"
+                      placeholder="Or say it in your own words…"
+                      autoFocus
+                      className="h-auto px-0 py-0 text-base md:text-[15px]"
+                    />
+                    <InputGroupAddon align="inline-end" className="gap-2.5 py-0 pr-0 has-[>button]:mr-0">
+                      <Kbd>↵</Kbd>
+                      <Button type="submit" size="sm" className="px-3 font-semibold" disabled={!answer.trim()}>Send</Button>
+                    </InputGroupAddon>
+                  </InputGroup>
                 </form>
               </div>
             ) : (
-              <form
-                onSubmit={sendFollowUp}
-                className="flex items-center gap-2.5 rounded-2xl border bg-card py-2 pr-2 pl-4 shadow-[0_10px_28px_-18px_rgb(60_40_20/0.3)] transition-colors focus-within:border-ring dark:shadow-none"
-              >
-                <input
-                  value={followUp}
-                  onChange={(e) => setFollowUp(e.target.value)}
-                  placeholder={outOfSteps ? 'No steps left in this trial' : sessionId ? 'Ask for a change…' : 'Connecting…'}
-                  disabled={!sessionId || outOfSteps}
-                  className="min-w-0 flex-1 bg-transparent text-base outline-none md:text-[15px] placeholder:text-muted-foreground/80 disabled:opacity-60"
-                />
-                <Kbd>↵</Kbd>
-                <Button type="submit" size="sm" className="rounded-lg px-3 font-semibold" disabled={!followUp.trim() || !sessionId || outOfSteps}>
-                  Send
-                </Button>
+              <form onSubmit={sendFollowUp}>
+                <InputGroup className="h-auto rounded-2xl bg-card py-2 pr-2 pl-4 shadow-[0_10px_28px_-18px_rgb(60_40_20/0.3)] dark:bg-card dark:shadow-none">
+                  <InputGroupInput
+                    value={followUp}
+                    onChange={(e) => setFollowUp(e.target.value)}
+                    aria-label="Message Orin"
+                    placeholder={outOfSteps ? 'No steps left in this trial' : sessionId ? 'Ask for a change…' : 'Connecting…'}
+                    disabled={!sessionId || outOfSteps}
+                    className="h-auto px-0 py-0 text-base md:text-[15px]"
+                  />
+                  <InputGroupAddon align="inline-end" className="gap-2.5 py-0 pr-0 has-[>button]:mr-0">
+                    <Kbd>↵</Kbd>
+                    <Button type="submit" size="sm" className="px-3 font-semibold" disabled={!followUp.trim() || !sessionId || outOfSteps}>
+                      Send
+                    </Button>
+                  </InputGroupAddon>
+                </InputGroup>
               </form>
             )}
             {stepsLabel && (
@@ -396,6 +391,8 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
             <div className="flex items-center gap-2 font-mono text-xs">
               <span className={cn('size-1.5 rounded-full bg-primary', status.active && 'animate-pulse shadow-[0_0_0_4px] shadow-primary/20')} />
               <span className="text-foreground/80">{statusHead}</span>
+              {/* Announced politely and only on the coarse state (building, live, fixing…), not per step. */}
+              <span role="status" className="sr-only">{statusHead}</span>
               {statusRest.length > 0 && <span className="text-muted-foreground">· {statusRest.join(' · ')}</span>}
             </div>
             <div className="flex items-center gap-0.5 text-muted-foreground">
@@ -466,7 +463,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
             mean dragging the conversation open first. */}
         <div className="shrink-0">{chatHeader}</div>
         <main className="flex min-h-0 flex-1 px-3 pb-3">{previewPane}</main>
-        <BuilderSheet status={status} composer={chatComposer}>{chatLog}</BuilderSheet>
+        <Suspense fallback={null}><BuilderSheet status={status} composer={chatComposer}>{chatLog}</BuilderSheet></Suspense>
         {rewindDialog}
       </div>
     )
@@ -487,7 +484,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
 function Timed({ ts, children, bubble }: { ts: unknown; children: React.ReactNode; bubble?: boolean }) {
   return (
     <div className="grid grid-cols-[44px_minmax(0,1fr)] items-start">
-      <span className={cn('font-mono text-[11px] text-muted-foreground/70', bubble ? 'pt-3' : 'pt-1')}>{clockTime(ts)}</span>
+      <span className={cn('font-mono text-[11px] text-muted-foreground', bubble ? 'pt-3' : 'pt-1')}>{clockTime(ts)}</span>
       <div className="min-w-0">{children}</div>
     </div>
   )
@@ -497,41 +494,32 @@ function Timed({ ts, children, bubble }: { ts: unknown; children: React.ReactNod
 // on reads "● working" and stays open; finished groups collapse to one summary line.
 function ActivityGroup({ events, working }: { events: AgentEvent[]; working: boolean }) {
   const [open, setOpen] = useState(working)
-  useEffect(() => { if (working) setOpen(true) }, [working])
+  // Opens when work starts on it; the user can still fold it while it runs.
+  const [wasWorking, setWasWorking] = useState(working)
+  if (working !== wasWorking) {
+    setWasWorking(working)
+    if (working) setOpen(true)
+  }
 
   if (events.length === 1 && !working) {
     return <div className="pl-11"><ActivityRow event={events[0]} /></div>
   }
 
   return (
-    <div className="pl-11">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground"
-        aria-expanded={open}
-      >
+    <Collapsible open={open} onOpenChange={setOpen} className="pl-11">
+      <CollapsibleTrigger className="flex items-center gap-2 rounded-sm font-mono text-xs text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50">
         {working
           ? <span className="size-[7px] animate-pulse rounded-full bg-primary shadow-[0_0_0_4px] shadow-primary/20" />
           : <ChevronRight className={cn('size-3 transition-transform', open && 'rotate-90')} />}
         {working && <span className="text-foreground">working</span>}
-        <span className={cn(working && 'text-muted-foreground/80')}>{working ? `· ${summarizeActivity(events)}` : summarizeActivity(events)}</span>
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="overflow-hidden"
-          >
-            <div className="mt-2 ml-[3px] space-y-1.5 border-l pl-3.5">
-              {events.map((e, i) => <ActivityRow key={i} event={e} />)}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+        <span className={cn(working && 'text-muted-foreground')}>{working ? `· ${summarizeActivity(events)}` : summarizeActivity(events)}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-2 ml-[3px] space-y-1.5 border-l pl-3.5">
+          {events.map((e, i) => <ActivityRow key={i} event={e} />)}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -550,7 +538,7 @@ function ActivityRow({ event }: { event: AgentEvent }) {
 function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer: (v: string) => void; onContinue?: () => void }) {
   const kind = eventKind(event)
   const continueButton = onContinue && (
-    <Button variant="outline" size="sm" className="mt-2.5 rounded-lg" onClick={onContinue}>Continue</Button>
+    <Button variant="outline" size="sm" className="mt-2.5" onClick={onContinue}>Continue</Button>
   )
 
   if (kind === 'limit' || kind === 'budget') {
@@ -591,7 +579,7 @@ function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer:
           {Array.isArray(event.options) && event.options.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {event.options.map((o) => (
-                <Button key={o} variant="outline" size="sm" className="rounded-lg" onClick={() => onAnswer(o)}>{o}</Button>
+                <Button key={o} variant="outline" size="sm" onClick={() => onAnswer(o)}>{o}</Button>
               ))}
             </div>
           )}
@@ -625,7 +613,7 @@ function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer:
 function SessionDivider({ ts }: { ts: unknown }) {
   const time = clockTime(ts)
   return (
-    <div className="flex items-center gap-3 py-1 font-mono text-[11px] text-muted-foreground/70">
+    <div className="flex items-center gap-3 py-1 font-mono text-[11px] text-muted-foreground">
       <span className="h-px flex-1 bg-border" />
       <span>reopened{time && ` · ${time}`}</span>
       <span className="h-px flex-1 bg-border" />

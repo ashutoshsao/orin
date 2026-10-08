@@ -101,8 +101,8 @@ export function AdminScreen() {
             Reusable, 60 steps, 7 days. Everyone who opens it shares one account.
           </p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-            <Input placeholder="Who is it for? (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
-            <Button className="rounded-lg" disabled={busy} onClick={newGuestLink}>
+            <Input aria-label="Who the guest link is for" placeholder="Who is it for? (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
+            <Button disabled={busy} onClick={newGuestLink}>
               <Link2 /> Create link
             </Button>
           </div>
@@ -114,11 +114,11 @@ export function AdminScreen() {
             One-time link, 48 hours. Unlimited access — for people you know.
           </p>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-            <Input type="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <Button className="rounded-lg" disabled={busy || !email.includes('@')} onClick={() => newInviteLink('invite')}>
+            <Input type="email" aria-label="Email to invite" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Button disabled={busy || !email.includes('@')} onClick={() => newInviteLink('invite')}>
               Invite
             </Button>
-            <Button variant="outline" className="rounded-lg" disabled={busy || !email.includes('@')} onClick={() => newInviteLink('reset')}>
+            <Button variant="outline" disabled={busy || !email.includes('@')} onClick={() => newInviteLink('reset')}>
               Reset password
             </Button>
           </div>
@@ -127,7 +127,7 @@ export function AdminScreen() {
         {fresh && (
           <button
             onClick={() => copy(fresh.url)}
-            className="mt-4 flex w-full items-center gap-2 rounded-xl border border-dashed px-4 py-3 text-left transition-colors hover:border-ring"
+            className="mt-4 flex w-full items-center gap-2 rounded-xl border border-dashed px-4 py-3 text-left transition-colors hover:border-ring outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             {copied ? <Check className="size-4 shrink-0 text-primary" /> : <Copy className="size-4 shrink-0 text-muted-foreground" />}
             <span className="truncate font-mono text-xs">{fresh.url}</span>

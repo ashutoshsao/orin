@@ -5,6 +5,7 @@ import { API, authed } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { GithubMark, Wordmark } from '@/components/brand'
 
@@ -45,6 +46,7 @@ export function AuthScreen() {
       <div className="absolute top-5 right-6"><ThemeToggle /></div>
       <div className="w-full max-w-sm">
         <div className="text-center">
+          <h1 className="sr-only">Sign in to Orin</h1>
           <Wordmark className="justify-center" />
           <p className="mt-4 text-balance text-[15px] text-muted-foreground">
             Describe an app. Watch it get built.
@@ -69,7 +71,7 @@ export function AuthScreen() {
         {!showEmail ? (
           <button
             onClick={() => setShowEmail(true)}
-            className="mt-6 w-full text-center text-[13px] text-muted-foreground transition-colors hover:text-foreground"
+            className="mt-6 w-full rounded-sm text-center text-[13px] text-muted-foreground transition-colors hover:text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
           >
             Invited by email? Sign in →
           </button>
@@ -81,24 +83,20 @@ export function AuthScreen() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
+              <InputGroup>
+                <InputGroupInput
                   id="password"
                   type={reveal ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pr-10"
                 />
-                <button
-                  type="button"
-                  onClick={() => setReveal((r) => !r)}
-                  aria-label={reveal ? 'Hide password' : 'Show password'}
-                  className="absolute inset-y-0 right-0 grid w-10 place-items-center text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton size="icon-xs" onClick={() => setReveal((r) => !r)} aria-label={reveal ? 'Hide password' : 'Show password'}>
+                    {reveal ? <EyeOff /> : <Eye />}
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
             <Button type="submit" className="w-full rounded-xl" disabled={busy}>

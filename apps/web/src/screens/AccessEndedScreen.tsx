@@ -19,7 +19,7 @@ export function AccessEndedScreen({ expired }: { expired: boolean }) {
             ? 'Thanks for trying Orin. Your access has expired, but what you built is still saved.'
             : "This account isn't set up to build with Orin."}
         </p>
-        <Button variant="outline" className="mt-8 rounded-lg" onClick={() => authClient.signOut()}>
+        <Button variant="outline" className="mt-8" onClick={() => authClient.signOut()}>
           Sign out
         </Button>
       </div>

@@ -3,8 +3,8 @@ import { Eye, EyeOff } from 'lucide-react'
 import { authClient } from '@/authClient'
 import { API } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from '@/components/ui/input-group'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Wordmark } from '@/components/brand'
 
@@ -74,8 +74,8 @@ export function InviteScreen({ token }: { token: string }) {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
-              <div className="relative">
-                <Input
+              <InputGroup>
+                <InputGroupInput
                   id="password"
                   type={reveal ? 'text' : 'password'}
                   autoFocus
@@ -83,18 +83,14 @@ export function InviteScreen({ token }: { token: string }) {
                   minLength={8}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pr-10"
                 />
                 {/* Shown by default on this screen: a typo here locks you out of the account. */}
-                <button
-                  type="button"
-                  onClick={() => setReveal((r) => !r)}
-                  aria-label={reveal ? 'Hide password' : 'Show password'}
-                  className="absolute inset-y-0 right-0 grid w-10 place-items-center text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  {reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                </button>
-              </div>
+                <InputGroupAddon align="inline-end">
+                  <InputGroupButton size="icon-xs" onClick={() => setReveal((r) => !r)} aria-label={reveal ? 'Hide password' : 'Show password'}>
+                    {reveal ? <EyeOff /> : <Eye />}
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
               <p className="text-[13px] text-muted-foreground">At least 8 characters.</p>
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
