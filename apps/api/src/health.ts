@@ -26,11 +26,15 @@ async function check(name: string, run: () => Promise<unknown>): Promise<[string
   }
 }
 
-export async function health(): Promise<{ ok: boolean; body: { status: string; checks: Record<string, Check> } }> {
+type Body = { status: string; version: string; commit: string; checks: Record<string, Check> };
+
+export async function health(): Promise<{ ok: boolean; body: Body }> {
   const checks: Record<string, Check> = Object.fromEntries(await Promise.all([
     check("database", () => db.execute(sql`select 1`)),
     check("redis", () => redis.send("PING", [])),
   ]));
   const ok = Object.values(checks).every((c) => c.ok);
-  return { ok, body: { status: ok ? "ok" : "degraded", checks } };
+  const version = process.env.VERSION ?? "dev";
+  const commit = process.env.GIT_SHA ?? "unknown";
+  return { ok, body: { status: ok ? "ok" : "degraded", version, commit, checks } };
 }

@@ -18,6 +18,11 @@ WORKDIR /app/apps/api
 # here needs root. `bun` is the unprivileged user in the base image.
 USER bun
 
+# Set by CI (docker.yml): which release/commit this image is, reported by GET /health.
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+ENV VERSION=$VERSION GIT_SHA=$GIT_SHA
+
 EXPOSE 4000
 
 CMD ["bun", "src/server.ts"]

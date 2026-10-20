@@ -1,10 +1,15 @@
 name: Build and push Docker image
 
-# Only `main` — this image is what the cluster runs, and `:latest` moving on a feature branch
-# would mean the next `rollout restart` deploys whatever was pushed last. Manual runs allowed.
+# Image tags (docker/metadata-action, the same scheme as tradio):
+#   every build      ashutoshsao/orin-api:<full commit sha>
+#   git tag v1.2.0   also :1.2.0
+#   main             also :latest  (convenience only)
+# 06-api.yml pins a version or a sha, never :latest: deploying is `kubectl apply -f` with a new tag, and a
+# rollback is the previous tag. Only main and version tags build, so :latest can't move to a feature branch.
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
@@ -13,6 +18,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ashutoshsao/orin-api
+          flavor: latest=false
+          tags: |
+            type=sha,format=long,prefix=
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -31,10 +47,11 @@ jobs:
           context: .
           file: apps/api/Dockerfile
           push: true
-          # `:latest` is what 06-api.yml pulls; the sha tag is the rollback handle
-          # (`k set image deploy/api api=ashutoshsao/orin-api:<sha> -n orin-app`).
-          tags: |
-            ashutoshsao/orin-api:latest
-            ashutoshsao/orin-api:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GET /health reports which version is running (the status page and valor show it)
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            GIT_SHA=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
