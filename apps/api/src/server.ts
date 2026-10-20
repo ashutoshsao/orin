@@ -15,6 +15,7 @@ import { acceptInvite, InviteError, peekInvite } from "./admin/invites";
 import { createGuestLink, listGuestLinks, redeemGuestLink, revokeGuestLink } from "./admin/guests";
 import { createInviteLink } from "./admin/invites";
 import { isAdminEmail, usageOverview } from "./admin/usage";
+import { health } from "./health";
 
 const PORT = 4000;
 
@@ -97,6 +98,12 @@ export const app = new Elysia()
     // Providers a BYOK visitor can choose, with suggested models (fast tier first).
     providers: PROVIDER_IDS.map((id) => ({ id, label: PROVIDERS[id].label, models: PROVIDERS[id].models })),
   }))
+  // The status page's deep check (Postgres + Redis); 503 with the failing check when degraded.
+  .get("/health", async ({ set }) => {
+    const { ok, body } = await health();
+    set.status = ok ? 200 : 503;
+    return body;
+  })
   // One-time email links (7b): look one up, then use it. Unauthenticated by nature — the
   // token IS the credential, so an unknown/used/expired one is a flat 404 either way.
   .get("/invite/:token", async ({ params, set }) => {
