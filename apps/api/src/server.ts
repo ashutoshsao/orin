@@ -5,7 +5,9 @@ import { db, message, project, snapshot } from "@repo/db";
 import { PROVIDERS, PROVIDER_IDS, isProviderId, serverProvider } from "./agent/LLM_Providers";
 import { clearKey, hasKey, keyInfo, providerForUser, setKey, validateKey } from "./persistence/byok";
 import { AgentSession, type AgentEvent } from "./agent/agent";
-import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
+import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, publish, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
+import { deployProject } from "./deploy/deployProject";
+import { vercelFromEnv } from "./deploy/vercel";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
@@ -295,6 +297,44 @@ export const app = new Elysia()
     },
     { body: t.Object({ snapshotId: t.String() }) },
   )
+  // Deploy the project's app to Vercel (spec 12). Allowlist only for now: an unclaimed app
+  // lives on Orin's own Vercel account, so a guest's build would be hosted under its name.
+  // Needs the open builder (the source is read from the live sandbox) and no turn mid-way
+  // (HEAD is only a finished round between turns). Answers at once — the build takes
+  // 30–60s, and its progress and outcome arrive as deploy_* events on the stream.
+  .post("/projects/:id/deploy", async ({ params, request, set }) => {
+    const who = await authorize(request);
+    if (!who.ok) { set.status = who.status; return { error: who.error }; }
+    if (who.limited) { set.status = 403; return { error: "deploy_not_allowed" }; }
+    const vercel = vercelFromEnv();
+    if (!vercel) { set.status = 503; return { error: "deploy_unconfigured" }; }
+    const [proj] = await db
+      .select({ id: project.id })
+      .from(project)
+      .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
+      .limit(1);
+    if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+    const live = getLive(params.id);
+    const session = live?.session;
+    if (!live || !session) { set.status = 409; return { error: "not_running" }; }
+    if (live.runActive) { set.status = 409; return { error: "run_active" }; }
+    if (live.deploying) { set.status = 409; return { error: "deploy_in_progress" }; }
+
+    live.deploying = true;
+    void deployProject({
+      projectId: params.id,
+      exportSource: () => session.exportSource(),
+      client: vercel,
+      emit: (event, data) => publish(live, event, data),
+      save: async (r) => {
+        await db.update(project)
+          .set({ deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() })
+          .where(eq(project.id, params.id));
+      },
+    }).finally(() => { live.deploying = false; });
+    set.status = 202;
+    return { ok: true };
+  })
   .get(
     "/agent/stream",
     async function* ({ query, request }) {

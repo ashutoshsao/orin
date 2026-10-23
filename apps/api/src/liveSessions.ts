@@ -39,6 +39,7 @@ type Live = {
   pendingAsk?: StreamEvent;
   runActive: boolean;
   step?: number;
+  deploying: boolean; // one deploy at a time per project
 };
 
 const lives = new Map<string, Live>(); // by projectId
@@ -64,6 +65,14 @@ function broadcast(live: Live, e: AgentEvent) {
   for (const sub of live.subscribers) sub.push(ev);
 }
 
+// Events that happen beside the agent rather than inside its loop (a deploy): same stream,
+// same buffer, same stdout line as the agent's own events.
+export function publish(live: Live, event: string, data: Record<string, unknown> = {}) {
+  const e: AgentEvent = { ts: new Date().toISOString(), sessionId: live.session?.id ?? "", event, ...data };
+  console.log(JSON.stringify(e));
+  broadcast(live, e);
+}
+
 // Register a live session for a project and boot it. Registration is synchronous, so
 // two connections racing for the same project attach to one session instead of two.
 // `boot` creates the AgentSession (wired to broadcast) and may return follow-up work
@@ -76,7 +85,7 @@ export function startLive(
 ): Live {
   const live: Live = {
     projectId, userId, limited, session: null, subscribers: new Set(), buffer: [], nextId: 1,
-    grace: null, closed: false, runActive: false,
+    grace: null, closed: false, runActive: false, deploying: false,
   };
   lives.set(projectId, live);
   void (async () => {

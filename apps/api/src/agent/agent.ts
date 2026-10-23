@@ -7,6 +7,7 @@ import { oversizeNote, SNAPSHOT_MAX_BYTES, snapshotRound } from "./snapshot";
 import { startDevServer, type DevServerHandle } from "./devServer";
 import { connectHmr, moduleUrlPath, type HmrListener } from "./hmrListener";
 import type { RestorePoint } from "../persistence/store";
+import { exportSource } from "../deploy/source";
 
 const TEMPLATE = "orin-react-workspace-dev";
 // Metadata stamped on every sandbox this API creates, so a freshly booted server can find
@@ -276,6 +277,12 @@ export class AgentSession {
     } catch (e) {
       this.log("enqueue_error", { message: String(e) });
     }
+  }
+
+  // The app's committed source, for a deploy (spec 12). Lives here because the sandbox is
+  // private to the session; the deploy itself (and its Vercel token) stays host-side.
+  exportSource() {
+    return exportSource(this.sandbox);
   }
 
   // Sandboxes are live VMs on E2B's infra — kill it when the session is done.

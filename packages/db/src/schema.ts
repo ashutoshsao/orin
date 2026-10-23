@@ -80,6 +80,11 @@ export const project = pgTable("project", {
   // worker drops any job whose generation is stale, so a push queued before a rewind can't
   // land after it (re-adding a row past the rewind point / moving latestSnapshotKey).
   rewindGen: integer("rewind_gen").notNull().default(0),
+  // Last successful deploy (spec 12): the URL to share, and which round commit it was built
+  // from — so the builder can tell whether the live app is behind the latest edits.
+  deployUrl: text("deploy_url"),
+  deployedCommit: text("deployed_commit"),
+  deployedAt: timestamp("deployed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

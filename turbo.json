@@ -22,7 +22,9 @@
         "GITHUB_CLIENT_ID",
         "GITHUB_CLIENT_SECRET",
         "WEB_ORIGIN",
-        "ORIN_GRACE_MS"
+        "ORIN_GRACE_MS",
+        "VERCEL_TOKEN",
+        "VERCEL_TEAM_ID"
       ]
     },
     "test": {
