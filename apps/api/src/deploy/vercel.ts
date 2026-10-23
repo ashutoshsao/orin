@@ -39,9 +39,22 @@ export function vercelFromEnv(): VercelClient | null {
   return new VercelClient({ token, teamId: process.env.VERCEL_TEAM_ID || undefined });
 }
 
-// One Vercel project per Orin project, named from its id so a redeploy lands in the same
-// project (and keeps its URL) without storing anything first.
-export const deployName = (projectId: string) => `orin-${projectId.replace(/-/g, "").slice(0, 12)}`;
+// One Vercel project per Orin project, and its name is the link people see:
+// "Recipe Box!" → recipe-box-1a2b → https://recipe-box-1a2b.vercel.app. The id suffix keeps two
+// "Todo app"s apart. Called once, at the first deploy — the result is stored and reused, so a
+// rename in Orin never moves a shared link. The slug is capped so the whole name stays well
+// inside a DNS label (63); Vercel allows lowercase letters, digits and single dashes.
+const SLUG_MAX = 40;
+export function deployName(projectId: string, appName: string): string {
+  const slug = appName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "") // é → e
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .slice(0, SLUG_MAX)
+    .replace(/^-+|-+$/g, "");
+  return `${slug || "app"}-${projectId.replace(/-/g, "").slice(0, 4)}`;
+}
 
 // The address to share. A production deployment gets the project's stable aliases besides its
 // per-deployment url; the shortest *.vercel.app one is the project's own name.

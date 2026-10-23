@@ -82,6 +82,9 @@ export const project = pgTable("project", {
   rewindGen: integer("rewind_gen").notNull().default(0),
   // Last successful deploy (spec 12): the URL to share, and which round commit it was built
   // from — so the builder can tell whether the live app is behind the latest edits.
+  // The Vercel project, named once from the app's name at its first deploy and kept after,
+  // so renaming the project in Orin never moves a link that's already been shared.
+  vercelProject: text("vercel_project"),
   deployUrl: text("deploy_url"),
   deployedCommit: text("deployed_commit"),
   deployedAt: timestamp("deployed_at", { withTimezone: true }),

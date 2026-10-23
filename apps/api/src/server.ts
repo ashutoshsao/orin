@@ -7,7 +7,7 @@ import { clearKey, hasKey, keyInfo, providerForUser, setKey, validateKey } from 
 import { AgentSession, type AgentEvent } from "./agent/agent";
 import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, publish, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { deployProject } from "./deploy/deployProject";
-import { vercelFromEnv } from "./deploy/vercel";
+import { deployName, vercelFromEnv } from "./deploy/vercel";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
@@ -309,7 +309,7 @@ export const app = new Elysia()
     const vercel = vercelFromEnv();
     if (!vercel) { set.status = 503; return { error: "deploy_unconfigured" }; }
     const [proj] = await db
-      .select({ id: project.id })
+      .select({ id: project.id, name: project.name, vercelProject: project.vercelProject })
       .from(project)
       .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
       .limit(1);
@@ -323,12 +323,13 @@ export const app = new Elysia()
     live.deploying = true;
     void deployProject({
       projectId: params.id,
+      vercelProject: proj.vercelProject ?? deployName(proj.id, proj.name),
       exportSource: () => session.exportSource(),
       client: vercel,
       emit: (event, data) => publish(live, event, data),
       save: async (r) => {
         await db.update(project)
-          .set({ deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() })
+          .set({ vercelProject: r.vercelProject, deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() })
           .where(eq(project.id, params.id));
       },
     }).finally(() => { live.deploying = false; });

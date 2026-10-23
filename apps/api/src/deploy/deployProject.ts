@@ -1,10 +1,11 @@
 import { SourceTooLarge, type Source } from "./source";
-import { deployName, publicUrl, type VercelClient } from "./vercel";
+import { publicUrl, type VercelClient } from "./vercel";
 
-export type DeployResult = { url: string; commit: string; deploymentId: string };
+export type DeployResult = { url: string; commit: string; deploymentId: string; vercelProject: string };
 
 export type DeploySeams = {
   projectId: string;
+  vercelProject: string; // the stored name, or deployName(...) on a first deploy
   exportSource: () => Promise<Source>;
   client: Pick<VercelClient, "uploadFiles" | "createDeployment" | "waitReady" | "waitServing" | "buildLogTail">;
   emit: (event: string, data?: Record<string, unknown>) => void;
@@ -20,7 +21,7 @@ export async function deployProject(s: DeploySeams): Promise<DeployResult | null
   try {
     const source = await s.exportSource();
     const refs = await s.client.uploadFiles(source.files);
-    const created = await s.client.createDeployment(deployName(s.projectId), refs, { orinProjectId: s.projectId, commit: source.commit });
+    const created = await s.client.createDeployment(s.vercelProject, refs, { orinProjectId: s.projectId, commit: source.commit });
     s.emit("deploy_building", { deploymentId: created.id, files: refs.length });
     const done = await s.client.waitReady(created.id);
     if (done.readyState !== "READY") {
@@ -28,7 +29,7 @@ export async function deployProject(s: DeploySeams): Promise<DeployResult | null
       s.emit("deploy_failed", { deploymentId: created.id, message: done.errorMessage ?? `build ${done.readyState.toLowerCase()}`, log });
       return null;
     }
-    const result = { url: publicUrl(done), commit: source.commit, deploymentId: done.id };
+    const result = { url: publicUrl(done), commit: source.commit, deploymentId: done.id, vercelProject: s.vercelProject };
     // Saved either way — the deployment exists and the alias will come up; `slow` only tells
     // the page the link may need a moment.
     const serving = await s.client.waitServing(result.url);

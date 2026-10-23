@@ -130,8 +130,13 @@ describe("VercelClient", () => {
 });
 
 describe("naming and URLs", () => {
-  test("a project always deploys to the same Vercel project", () => {
-    expect(deployName("1a2b3c4d-5e6f-7a8b-9c0d-ef1234567890")).toBe("orin-1a2b3c4d5e6f");
+  test("the link is the app's name, made URL-safe, plus a short id", () => {
+    const id = "1a2b3c4d-5e6f-7a8b-9c0d-ef1234567890";
+    expect(deployName(id, "Recipe Box!")).toBe("recipe-box-1a2b");
+    expect(deployName(id, "  Café   Menü — v2 ")).toBe("cafe-menu-v2-1a2b");
+    expect(deployName(id, "🚀🚀")).toBe("app-1a2b"); // nothing usable left
+    expect(deployName(id, "x".repeat(80))).toBe(`${"x".repeat(40)}-1a2b`);
+    expect(deployName(id, `${"a".repeat(39)} b`)).toBe(`${"a".repeat(39)}-1a2b`); // no dash left dangling at the cut
   });
   test("the shared URL is the project's shortest vercel.app alias", () => {
     expect(publicUrl({ url: "orin-x-abc.vercel.app", alias: ["orin-x-team.vercel.app", "orin-x.vercel.app"] })).toBe("https://orin-x.vercel.app");
@@ -146,6 +151,7 @@ describe("deployProject", () => {
     const saved: unknown[] = [];
     const s: DeploySeams = {
       projectId: "1a2b3c4d-0000-0000-0000-000000000000",
+      vercelProject: "orin-x",
       exportSource: async () => {
         if (exportFails) throw exportFails;
         return { commit: COMMIT, files: [{ path: "index.html", bytes: new Uint8Array([1]) }] };
@@ -160,7 +166,7 @@ describe("deployProject", () => {
   test("a successful build is saved and reported with its URL", async () => {
     const { s, events, saved } = seams(["BUILDING", "READY"]);
     const r = await deployProject(s);
-    expect(r).toEqual({ url: "https://orin-x.vercel.app", commit: COMMIT, deploymentId: "dpl_1" });
+    expect(r).toEqual({ url: "https://orin-x.vercel.app", commit: COMMIT, deploymentId: "dpl_1", vercelProject: "orin-x" });
     expect(saved).toEqual([r]);
     expect(events.map((e) => e.event)).toEqual(["deploy_started", "deploy_building", "deploy_ready"]);
   });

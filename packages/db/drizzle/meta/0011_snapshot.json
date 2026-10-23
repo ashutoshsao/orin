@@ -1,5 +1,5 @@
 {
-  "id": "12e4a7d4-3b41-411d-8e49-ee226ed83db4",
+  "id": "773b0fe6-b134-4588-93c6-a5cc01d90fc3",
   "prevId": "bea13219-e44c-420b-8413-3392cce34510",
   "version": "7",
   "dialect": "postgresql",
@@ -374,6 +374,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "vercel_project": {
+          "name": "vercel_project",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         },
         "deploy_url": {
           "name": "deploy_url",
