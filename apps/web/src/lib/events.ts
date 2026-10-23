@@ -106,7 +106,12 @@ export type FeedItem =
 
 export function groupFeed(events: AgentEvent[]): FeedItem[] {
   const out: FeedItem[] = []
-  for (const e of events) {
+  // The saved transcript can't tell a run that died from one still going — both are a prompt
+  // with no final answer yet. Since a session now outlives its tab until the turn ends, a
+  // page reopened mid-run gets `run_active` from the server: that run wasn't interrupted.
+  const runningFrom = events.findLastIndex((e) => e.event === 'run_active')
+  for (const [i, e] of events.entries()) {
+    if (e.event === 'interrupted' && i < runningFrom) continue
     // `run_active` is state the server sends a freshly-attached page ("a run is already
     // in progress, at step N") — it drives the status bar, but isn't something to show.
     if (e.event === 'run_active') continue

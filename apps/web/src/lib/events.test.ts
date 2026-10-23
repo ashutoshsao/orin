@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { activityLine, appTrouble, errorText, runStatus } from './events'
+import { activityLine, appTrouble, errorText, groupFeed, runStatus } from './events'
 import type { AgentEvent } from './api'
 
 // Live events carry a sessionId; replayed history doesn't, and must not drive the status bar.
@@ -119,5 +119,19 @@ describe('activityLine for tool calls', () => {
     ])).detail
     expect(d).toContain('ls -la')
     expect(d).toContain('cat package.json')
+  })
+})
+
+// Reopening a project mid-run: the transcript has a prompt with no final answer, which the
+// history loader marks `interrupted` — but the server says the run is still going.
+describe('groupFeed and the interrupted notice', () => {
+  const shown = (events: AgentEvent[]) => groupFeed(events).filter((f) => f.type === 'message').map((f) => f.event.event)
+
+  test('hidden when the server reports that run as still active', () => {
+    expect(shown([replayed('run_start'), replayed('interrupted'), ev('run_active', { step: 4 })])).toEqual(['run_start'])
+  })
+
+  test('shown when the run really was cut off', () => {
+    expect(shown([replayed('run_start'), replayed('interrupted'), ev('sandbox_created')])).toEqual(['run_start', 'interrupted'])
   })
 })
