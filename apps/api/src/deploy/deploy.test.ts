@@ -61,12 +61,14 @@ describe("exportSource", () => {
 });
 
 // Answers for Vercel and records what was asked.
-function fakeVercel(states: string[], opts: { failCreate?: boolean } = {}) {
+function fakeVercel(states: string[], opts: { failCreate?: boolean; aliasWarmup?: number } = {}) {
+  opts.aliasWarmup ??= 0;
   const calls: { method: string; url: URL; headers: Record<string, string>; body?: unknown }[] = [];
   let polls = 0;
+  let aliasPolls = 0;
   const fetchFn = (async (input: URL, init: RequestInit) => {
     const url = new URL(input);
-    const headers = init.headers as Record<string, string>;
+    const headers = (init.headers ?? {}) as Record<string, string>;
     calls.push({ method: init.method!, url, headers, body: typeof init.body === "string" ? JSON.parse(init.body) : undefined });
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
     if (url.pathname === "/v2/files") return json(200, {});
@@ -79,6 +81,7 @@ function fakeVercel(states: string[], opts: { failCreate?: boolean } = {}) {
       const readyState = states[Math.min(polls++, states.length - 1)];
       return json(200, { id: "dpl_1", url: "orin-x-abc.vercel.app", readyState, alias: ["orin-x-team.vercel.app", "orin-x.vercel.app"], errorMessage: readyState === "ERROR" ? "Command \"bun run build\" exited with 1" : undefined });
     }
+    if (url.host === "orin-x.vercel.app") return new Response("", { status: aliasPolls++ < opts.aliasWarmup! ? 404 : 200 });
     if (url.pathname === "/v3/deployments/dpl_1/events") return json(200, [{ text: "src/App.tsx(3,1): error TS1005" }, { text: "exited with 1" }]);
     return json(404, {});
   }) as unknown as typeof fetch;
@@ -108,6 +111,14 @@ describe("VercelClient", () => {
     const { client, calls } = fakeVercel(["QUEUED", "BUILDING", "READY"]);
     expect((await client.waitReady("dpl_1")).readyState).toBe("READY");
     expect(calls.filter((c) => c.url.pathname === "/v13/deployments/dpl_1")).toHaveLength(3);
+  });
+
+  test("waits out the alias's 404 after READY before calling the link live", async () => {
+    const { client, calls } = fakeVercel(["READY"], { aliasWarmup: 2 });
+    expect(await client.waitServing("https://orin-x.vercel.app")).toBe(true);
+    const visits = calls.filter((c) => c.url.host === "orin-x.vercel.app");
+    expect(visits).toHaveLength(3);
+    expect(visits[0]!.headers.Authorization).toBeUndefined(); // checked as a visitor would see it
   });
 
   test("an API error carries Vercel's code and message", async () => {

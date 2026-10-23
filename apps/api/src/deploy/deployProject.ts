@@ -6,7 +6,7 @@ export type DeployResult = { url: string; commit: string; deploymentId: string }
 export type DeploySeams = {
   projectId: string;
   exportSource: () => Promise<Source>;
-  client: Pick<VercelClient, "uploadFiles" | "createDeployment" | "waitReady" | "buildLogTail">;
+  client: Pick<VercelClient, "uploadFiles" | "createDeployment" | "waitReady" | "waitServing" | "buildLogTail">;
   emit: (event: string, data?: Record<string, unknown>) => void;
   save: (r: DeployResult) => Promise<void>;
 };
@@ -29,8 +29,11 @@ export async function deployProject(s: DeploySeams): Promise<DeployResult | null
       return null;
     }
     const result = { url: publicUrl(done), commit: source.commit, deploymentId: done.id };
+    // Saved either way — the deployment exists and the alias will come up; `slow` only tells
+    // the page the link may need a moment.
+    const serving = await s.client.waitServing(result.url);
     await s.save(result);
-    s.emit("deploy_ready", { ...result });
+    s.emit("deploy_ready", { ...result, ...(serving ? {} : { slow: true }) });
     return result;
   } catch (e) {
     const message = e instanceof SourceTooLarge

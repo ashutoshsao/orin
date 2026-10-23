@@ -122,6 +122,20 @@ export class VercelClient {
     }
   }
 
+  // READY isn't "the link works": the project alias is still propagating for a few seconds
+  // after it (the first real deploy answered 404 DEPLOYMENT_NOT_FOUND, then 200). Wait until the
+  // shared URL serves, so the first click on it never lands on Vercel's 404. Unauthenticated
+  // on purpose — this is what a visitor sees.
+  async waitServing(url: string, opts: { timeoutMs?: number; intervalMs?: number } = {}): Promise<boolean> {
+    const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
+    for (;;) {
+      const res = await this.fetch(url, { redirect: "manual" }).catch(() => null);
+      if (res && res.status !== 404) return true;
+      if (Date.now() > deadline) return false;
+      await this.sleep(opts.intervalMs ?? 2_000);
+    }
+  }
+
   // The end of the build output — what someone (or later the agent) needs to fix the build.
   // Best effort: a failed deploy is reported either way.
   async buildLogTail(id: string): Promise<string> {
