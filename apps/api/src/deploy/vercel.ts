@@ -104,6 +104,19 @@ export class VercelClient {
     });
   }
 
+  // Whether the team already has a project by this name. Checked before an app's first deploy:
+  // the team also holds things that aren't Orin apps (the Orin web app itself, a portfolio), and
+  // deploying to an existing name would replace whatever is there.
+  async projectExists(name: string): Promise<boolean> {
+    try {
+      await this.call("GET", `/v9/projects/${encodeURIComponent(name)}`);
+      return true;
+    } catch (e) {
+      if (e instanceof VercelError && e.status === 404) return false;
+      throw e;
+    }
+  }
+
   getDeployment(id: string): Promise<Deployment> {
     return this.call<Deployment>("GET", `/v13/deployments/${id}`);
   }

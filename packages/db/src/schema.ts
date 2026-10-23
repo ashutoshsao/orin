@@ -84,7 +84,7 @@ export const project = pgTable("project", {
   // from — so the builder can tell whether the live app is behind the latest edits.
   // The Vercel project, named once from the app's name at its first deploy and kept after,
   // so renaming the project in Orin never moves a link that's already been shared.
-  vercelProject: text("vercel_project"),
+  vercelProject: text("vercel_project").unique(), // two Orin projects must never share one Vercel project
   deployUrl: text("deploy_url"),
   deployedCommit: text("deployed_commit"),
   deployedAt: timestamp("deployed_at", { withTimezone: true }),

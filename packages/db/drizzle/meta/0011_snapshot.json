@@ -1,5 +1,5 @@
 {
-  "id": "773b0fe6-b134-4588-93c6-a5cc01d90fc3",
+  "id": "f6c2239f-926b-44f4-a1ec-2497bcb11a3f",
   "prevId": "bea13219-e44c-420b-8413-3392cce34510",
   "version": "7",
   "dialect": "postgresql",
@@ -431,7 +431,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "project_vercel_project_unique": {
+          "name": "project_vercel_project_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "vercel_project"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

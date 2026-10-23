@@ -82,6 +82,7 @@ function fakeVercel(states: string[], opts: { failCreate?: boolean; aliasWarmup?
       const readyState = states[Math.min(polls++, states.length - 1)];
       return json(200, { id: "dpl_1", url: "orin-x-abc.vercel.app", readyState, alias: ["orin-x-team.vercel.app", "orin-x.vercel.app"], errorMessage: readyState === "ERROR" ? "Command \"bun run build\" exited with 1" : undefined });
     }
+    if (url.pathname.startsWith("/v9/projects/")) return url.pathname.endsWith("/portfolio-1a2b") ? json(200, { name: "portfolio-1a2b" }) : json(404, { error: { code: "not_found", message: "Project not found" } });
     if (url.host === "orin-x.vercel.app") return new Response("", { status: aliasPolls++ < opts.aliasWarmup! ? 404 : 200 });
     if (url.pathname === "/v3/deployments/dpl_1/events") return json(200, [{ text: "src/App.tsx(3,1): error TS1005" }, { text: "exited with 1" }]);
     return json(404, {});
@@ -120,6 +121,12 @@ describe("VercelClient", () => {
     const visits = calls.filter((c) => c.url.host === "orin-x.vercel.app");
     expect(visits).toHaveLength(3);
     expect(visits[0]!.headers.Authorization).toBeUndefined(); // checked as a visitor would see it
+  });
+
+  test("tells an existing team project from a free name", async () => {
+    const { client } = fakeVercel(["READY"]);
+    expect(await client.projectExists("portfolio-1a2b")).toBe(true); // something already lives there
+    expect(await client.projectExists("coffee-shop-1a2b")).toBe(false);
   });
 
   test("an API error carries Vercel's code and message", async () => {

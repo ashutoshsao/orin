@@ -9,6 +9,7 @@ import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, pu
 import { deployProject } from "./deploy/deployProject";
 import { vercelFromEnv } from "./deploy/vercel";
 import { idSuffix, isValidSlug, suggestSlug, vercelProjectName } from "./deploy/naming";
+import { releaseVercelProject, reserveVercelProject } from "./deploy/reserve";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
@@ -346,17 +347,41 @@ export const app = new Elysia()
     if (!live || !session) { set.status = 409; return { error: "not_running" }; }
     if (live.runActive) { set.status = 409; return { error: "run_active" }; }
     if (live.deploying) { set.status = 409; return { error: "deploy_in_progress" }; }
+    live.deploying = true; // set before any await, so a double click can't start two
 
-    live.deploying = true;
+    // First deploy: claim the name in Postgres (atomic, see reserve.ts), then make sure the
+    // Vercel team doesn't already have a project by it that isn't an Orin app.
+    let vercelProject = proj.vercelProject;
+    if (!vercelProject) {
+      const name = vercelProjectName(proj.id, slug!);
+      try {
+        if ((await reserveVercelProject(proj.id, name)) === "taken") {
+          live.deploying = false;
+          set.status = 409;
+          return { error: "name_taken" };
+        }
+        if (await vercel.projectExists(name)) {
+          await releaseVercelProject(proj.id, name);
+          live.deploying = false;
+          set.status = 409;
+          return { error: "name_taken" };
+        }
+      } catch (e) {
+        live.deploying = false;
+        throw e;
+      }
+      vercelProject = name;
+    }
+
     void deployProject({
       projectId: params.id,
-      vercelProject: proj.vercelProject ?? vercelProjectName(proj.id, slug!),
+      vercelProject,
       exportSource: () => session.exportSource(),
       client: vercel,
       emit: (event, data) => publish(live, event, data),
       save: async (r) => {
         await db.update(project)
-          .set({ vercelProject: r.vercelProject, deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() })
+          .set({ deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() }) // the name was reserved before deploying
           .where(eq(project.id, params.id));
       },
     }).finally(() => { live.deploying = false; });
