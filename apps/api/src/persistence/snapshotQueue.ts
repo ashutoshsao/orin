@@ -1,4 +1,5 @@
 import { RedisClient } from "bun";
+import { redisCommand } from "./redisCommand";
 import { and, eq, isNull, lt, or } from "drizzle-orm";
 import { db, project, snapshot } from "@repo/db";
 import { prefixOf, r2, snapshotKey, type KeyScope } from "./r2";
@@ -16,7 +17,6 @@ import type { SnapshotJob } from "../agent/agent";
 const STREAM = "orin:snapshots";
 const URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
-const producer = new RedisClient(URL);
 // Bundle bytes indexed by job id — kept out of Redis, handed to the worker in-process.
 const bundles = new Map<string, Uint8Array>();
 // Last commit durably in R2 per project — a `mark` (no-op round) only advances the
@@ -31,11 +31,16 @@ export function snapshotEnqueuer(projectId: string, userId: string, rewindGen: n
     if (job.kind === "push") {
       const jobId = crypto.randomUUID();
       bundles.set(jobId, job.bundle);
-      await producer.send("XADD", [STREAM, "*",
-        "kind", "push", "jobId", jobId, "projectId", projectId, "userId", userId, "scope", scope,
-        "commitHash", job.commitHash, "n", String(job.n), "gen", String(rewindGen)]);
+      try {
+        await redisCommand(URL, "XADD", [STREAM, "*",
+          "kind", "push", "jobId", jobId, "projectId", projectId, "userId", userId, "scope", scope,
+          "commitHash", job.commitHash, "n", String(job.n), "gen", String(rewindGen)]);
+      } catch (error) {
+        bundles.delete(jobId); // failed enqueues must not leak full workspace bundles
+        throw error;
+      }
     } else {
-      await producer.send("XADD", [STREAM, "*",
+      await redisCommand(URL, "XADD", [STREAM, "*",
         "kind", "mark", "projectId", projectId, "commitHash", job.commitHash, "n", String(job.n), "gen", String(rewindGen)]);
     }
   };
@@ -128,9 +133,9 @@ async function pruneBundles(projectId: string, latestKey: string) {
 // Per-job errors are logged and skipped — a failed push leaves durableCodebaseN behind
 // (safe), and the next full bundle self-heals it.
 export function startSnapshotWorker() {
-  const consumer = new RedisClient(URL); // its own connection: XREAD BLOCK is blocking
+  let consumer = new RedisClient(URL); // its own connection: XREAD BLOCK is blocking
   (async () => {
-    await producer.send("DEL", [STREAM]).catch(() => {});
+    await redisCommand(URL, "DEL", [STREAM]).catch(() => {});
     let lastId = "0";
     for (;;) {
       try {
@@ -151,6 +156,8 @@ export function startSnapshotWorker() {
         }
       } catch (e) {
         console.log(JSON.stringify({ event: "snapshot_worker_read_error", message: String(e) }));
+        consumer.close();
+        consumer = new RedisClient(URL); // a terminally failed client cannot recover by send() alone
         await Bun.sleep(1000); // back off on a connection blip, then retry
       }
     }
