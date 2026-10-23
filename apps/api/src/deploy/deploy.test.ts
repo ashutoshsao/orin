@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SnapshotSandbox } from "../agent/snapshot";
 import { exportSource, parseTar, SourceTooLarge } from "./source";
-import { deployName, publicUrl, VercelClient, VercelError } from "./vercel";
+import { publicUrl, VercelClient, VercelError } from "./vercel";
+import { appTitle, isValidSlug, suggestSlug, vercelProjectName } from "./naming";
 import { deployProject, type DeploySeams } from "./deployProject";
 
 const LONG = `src/${"deeply-nested-folder/".repeat(6)}Component.tsx`; // > 100 chars → pax header
@@ -130,14 +131,33 @@ describe("VercelClient", () => {
 });
 
 describe("naming and URLs", () => {
-  test("the link is the app's name, made URL-safe, plus a short id", () => {
-    const id = "1a2b3c4d-5e6f-7a8b-9c0d-ef1234567890";
-    expect(deployName(id, "Recipe Box!")).toBe("recipe-box-1a2b");
-    expect(deployName(id, "  Café   Menü — v2 ")).toBe("cafe-menu-v2-1a2b");
-    expect(deployName(id, "🚀🚀")).toBe("app-1a2b"); // nothing usable left
-    expect(deployName(id, "x".repeat(80))).toBe(`${"x".repeat(40)}-1a2b`);
-    expect(deployName(id, `${"a".repeat(39)} b`)).toBe(`${"a".repeat(39)}-1a2b`); // no dash left dangling at the cut
+  const id = "1a2b3c4d-5e6f-7a8b-9c0d-ef1234567890";
+
+  test("the Vercel project is the chosen slug plus a short id", () => {
+    expect(vercelProjectName(id, "verdant")).toBe("verdant-1a2b");
+    expect(vercelProjectName(id, "")).toBe("app-1a2b");
   });
+
+  test("the suggestion is the app's own <title>, before any tagline", () => {
+    const html = (t: string) => `<html><head><title>${t}</title></head></html>`;
+    expect(suggestSlug(html("Verdant — Plant care, simplified"), "can you build me a plant app")).toBe("verdant");
+    expect(suggestSlug(html("Brew &amp; Bean | Coffee"), "x")).toBe("brew-bean");
+    expect(suggestSlug(html("Café Menü"), "x")).toBe("cafe-menu");
+    expect(appTitle(html("Recipes &#8212; Home"))).toBe("Recipes");
+  });
+
+  test("without a real title, the prompt's meaningful words are used", () => {
+    const prompt = "can you build me a landing page for my coffee shop with a me"; // a real 60-char cut
+    expect(suggestSlug("<title>react-template</title>", prompt)).toBe("landing-page-coffee"); // the template's own title
+    expect(suggestSlug(null, prompt)).toBe("landing-page-coffee");
+    expect(suggestSlug(null, "🚀")).toBe("app");
+  });
+
+  test("a typed name is accepted only as a clean slug of at most 40 characters", () => {
+    for (const ok of ["verdant", "brew-bean", "a1", "x".repeat(40)]) expect(isValidSlug(ok)).toBe(true);
+    for (const bad of ["", "Verdant", "brew--bean", "-x", "x-", "café", "a b", "x".repeat(41)]) expect(isValidSlug(bad)).toBe(false);
+  });
+
   test("the shared URL is the project's shortest vercel.app alias", () => {
     expect(publicUrl({ url: "orin-x-abc.vercel.app", alias: ["orin-x-team.vercel.app", "orin-x.vercel.app"] })).toBe("https://orin-x.vercel.app");
     expect(publicUrl({ url: "orin-x-abc.vercel.app" })).toBe("https://orin-x-abc.vercel.app");

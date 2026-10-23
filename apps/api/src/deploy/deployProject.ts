@@ -5,7 +5,7 @@ export type DeployResult = { url: string; commit: string; deploymentId: string; 
 
 export type DeploySeams = {
   projectId: string;
-  vercelProject: string; // the stored name, or deployName(...) on a first deploy
+  vercelProject: string; // the stored name, or vercelProjectName(...) on a first deploy
   exportSource: () => Promise<Source>;
   client: Pick<VercelClient, "uploadFiles" | "createDeployment" | "waitReady" | "waitServing" | "buildLogTail">;
   emit: (event: string, data?: Record<string, unknown>) => void;

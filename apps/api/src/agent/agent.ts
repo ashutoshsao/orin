@@ -285,6 +285,12 @@ export class AgentSession {
     return exportSource(this.sandbox);
   }
 
+  // The app's index.html, for the publish dialog's name suggestion (its <title>). Null when
+  // it can't be read — the suggestion falls back to the project name.
+  readIndexHtml(): Promise<string | null> {
+    return this.sandbox.files.read(`${WORKDIR}/index.html`).catch(() => null);
+  }
+
   // Sandboxes are live VMs on E2B's infra — kill it when the session is done.
   async close() {
     this.closed = true; // stop any in-flight loop before/while we tear down

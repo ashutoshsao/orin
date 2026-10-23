@@ -7,7 +7,8 @@ import { clearKey, hasKey, keyInfo, providerForUser, setKey, validateKey } from 
 import { AgentSession, type AgentEvent } from "./agent/agent";
 import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, publish, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
 import { deployProject } from "./deploy/deployProject";
-import { deployName, vercelFromEnv } from "./deploy/vercel";
+import { vercelFromEnv } from "./deploy/vercel";
+import { idSuffix, isValidSlug, suggestSlug, vercelProjectName } from "./deploy/naming";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
 import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
@@ -302,7 +303,25 @@ export const app = new Elysia()
   // Needs the open builder (the source is read from the live sandbox) and no turn mid-way
   // (HEAD is only a finished round between turns). Answers at once — the build takes
   // 30–60s, and its progress and outcome arrive as deploy_* events on the stream.
-  .post("/projects/:id/deploy", async ({ params, request, set }) => {
+  // What the publish dialog needs. Before the first deploy: a suggested name (from the app's
+  // <title>) and the fixed id suffix it will carry. After: the stored link, which no longer
+  // changes. `canDeploy` is the server's answer, so the page never guesses at tiers.
+  .get("/projects/:id/deploy", async ({ params, request, set }) => {
+    const who = await authorize(request);
+    if (!who.ok) { set.status = who.status; return { error: who.error }; }
+    const [proj] = await db
+      .select({ id: project.id, name: project.name, vercelProject: project.vercelProject, deployUrl: project.deployUrl, deployedCommit: project.deployedCommit, deployedAt: project.deployedAt })
+      .from(project)
+      .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
+      .limit(1);
+    if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+    const canDeploy = !who.limited && vercelFromEnv() !== null;
+    const stored = { vercelProject: proj.vercelProject, deployUrl: proj.deployUrl, deployedCommit: proj.deployedCommit, deployedAt: proj.deployedAt };
+    if (proj.vercelProject) return { ...stored, canDeploy };
+    const html = (await getLive(params.id)?.session?.readIndexHtml()) ?? null;
+    return { ...stored, canDeploy, suggestion: suggestSlug(html, proj.name), suffix: idSuffix(proj.id) };
+  })
+  .post("/projects/:id/deploy", async ({ params, body, request, set }) => {
     const who = await authorize(request);
     if (!who.ok) { set.status = who.status; return { error: who.error }; }
     if (who.limited) { set.status = 403; return { error: "deploy_not_allowed" }; }
@@ -314,6 +333,9 @@ export const app = new Elysia()
       .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
       .limit(1);
     if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+    // The name is chosen once, in the publish dialog; after the first deploy it's ignored.
+    const slug = body?.name;
+    if (!proj.vercelProject && slug !== undefined && !isValidSlug(slug)) { set.status = 400; return { error: "invalid_name" }; }
     const live = getLive(params.id);
     const session = live?.session;
     if (!live || !session) { set.status = 409; return { error: "not_running" }; }
@@ -323,7 +345,7 @@ export const app = new Elysia()
     live.deploying = true;
     void deployProject({
       projectId: params.id,
-      vercelProject: proj.vercelProject ?? deployName(proj.id, proj.name),
+      vercelProject: proj.vercelProject ?? vercelProjectName(proj.id, slug ?? suggestSlug(await session.readIndexHtml(), proj.name)),
       exportSource: () => session.exportSource(),
       client: vercel,
       emit: (event, data) => publish(live, event, data),
@@ -335,7 +357,7 @@ export const app = new Elysia()
     }).finally(() => { live.deploying = false; });
     set.status = 202;
     return { ok: true };
-  })
+  }, { body: t.Optional(t.Object({ name: t.Optional(t.String()) })) })
   .get(
     "/agent/stream",
     async function* ({ query, request }) {
