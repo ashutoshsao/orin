@@ -3,7 +3,7 @@ import type { AgentEvent } from './api'
 // The feed mixes two very different things: the conversation (what the user asked, what
 // the agent answered) and telemetry (tool calls, snapshots, preview probes). Rendering
 // them identically is what made the old feed read as noise — so classify first.
-export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'limit' | 'budget' | 'activity' | 'error'
+export type EventKind = 'user' | 'assistant' | 'question' | 'notice' | 'limit' | 'budget' | 'deploy' | 'activity' | 'error'
 
 // The orchestrator's step-limit note (written by agent.ts when a run hits maxIteration).
 // Live it arrives as a `max_iterations_reached` event; after a reopen it's just a saved
@@ -18,6 +18,10 @@ const BUDGET_NOTE = /^This (trial's step budget is used up|account's access has 
 export function eventKind(e: AgentEvent): EventKind {
   switch (e.event) {
     case 'interrupted': return 'notice'
+    // A publish's outcome is something the user did and needs to see — the link, or why not —
+    // so it's a message, while its progress rows are ordinary activity.
+    case 'deploy_ready':
+    case 'deploy_failed': return 'deploy'
     case 'max_iterations_reached': return 'limit'
     case 'budget_exhausted': return 'budget'
     case 'run_start': return 'user'
@@ -73,6 +77,8 @@ export function activityLine(e: AgentEvent): { label: string; detail: string } {
     case 'preview_watch_unavailable': return { label: 'preview', detail: 'error watch unavailable' }
     case 'preview_repairing': return { label: 'fixing', detail: 'the preview' }
     case 'sandbox_closed': return { label: 'environment', detail: 'closed' }
+    case 'deploy_started': return { label: 'publishing', detail: 'reading the app' }
+    case 'deploy_building': return { label: 'publishing', detail: `building on Vercel · ${e.files} files` }
     default: return { label: e.event.replace(/_/g, ' '), detail: '' }
   }
 }

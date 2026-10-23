@@ -6,6 +6,7 @@ import { PROVIDERS, PROVIDER_IDS, isProviderId, serverProvider } from "./agent/L
 import { clearKey, hasKey, keyInfo, providerForUser, setKey, validateKey } from "./persistence/byok";
 import { AgentSession, type AgentEvent } from "./agent/agent";
 import { closeLive, closeOtherLives, getLive, getSession, guestSlotAvailable, publish, startLive, subscribe, unsubscribe, type StreamEvent } from "./liveSessions";
+import { acquireDeployment } from "./deploy/operation";
 import { deployProject } from "./deploy/deployProject";
 import { vercelFromEnv } from "./deploy/vercel";
 import { idSuffix, isValidSlug, suggestSlug, vercelProjectName } from "./deploy/naming";
@@ -326,68 +327,101 @@ export const app = new Elysia()
     const who = await authorize(request);
     if (!who.ok) { set.status = who.status; return { error: who.error }; }
     if (who.limited) { set.status = 403; return { error: "deploy_not_allowed" }; }
-    const vercel = vercelFromEnv();
-    if (!vercel) { set.status = 503; return { error: "deploy_unconfigured" }; }
-    const [proj] = await db
-      .select({ id: project.id, name: project.name, vercelProject: project.vercelProject })
-      .from(project)
-      .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
-      .limit(1);
-    if (!proj) { set.status = 404; return { error: "project_not_found" }; }
-    // The first deploy needs a name the user typed in the publish dialog — never a guess they
-    // didn't see. It's a strict slug, so it can't carry anything but [a-z0-9-] into the Vercel
-    // request or the database. After the first deploy it's ignored: the link doesn't move.
-    const slug = body?.name;
-    if (!proj.vercelProject) {
-      if (slug === undefined) { set.status = 400; return { error: "name_required" }; }
-      if (!isValidSlug(slug)) { set.status = 400; return { error: "invalid_name" }; }
-    }
-    const live = getLive(params.id);
-    const session = live?.session;
-    if (!live || !session) { set.status = 409; return { error: "not_running" }; }
-    if (live.runActive) { set.status = 409; return { error: "run_active" }; }
-    if (live.deploying) { set.status = 409; return { error: "deploy_in_progress" }; }
-    live.deploying = true; // set before any await, so a double click can't start two
-
-    // First deploy: claim the name in Postgres (atomic, see reserve.ts), then make sure the
-    // Vercel team doesn't already have a project by it that isn't an Orin app.
-    let vercelProject = proj.vercelProject;
-    if (!vercelProject) {
-      const name = vercelProjectName(proj.id, slug!);
-      try {
-        if ((await reserveVercelProject(proj.id, name)) === "taken") {
-          live.deploying = false;
-          set.status = 409;
-          return { error: "name_taken" };
-        }
-        if (await vercel.projectExists(name)) {
-          await releaseVercelProject(proj.id, name);
-          live.deploying = false;
-          set.status = 409;
-          return { error: "name_taken" };
-        }
-      } catch (e) {
-        live.deploying = false;
-        throw e;
+    const release = acquireDeployment(params.id);
+    if (!release) { set.status = 409; return { error: "deploy_in_progress" }; }
+    let handedOff = false;
+    try {
+      const vercel = vercelFromEnv();
+      if (!vercel) { set.status = 503; return { error: "deploy_unconfigured" }; }
+      const [proj] = await db
+        .select({ id: project.id, name: project.name, vercelProject: project.vercelProject })
+        .from(project)
+        .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
+        .limit(1);
+      if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+      // The first deploy needs a name the user typed in the publish dialog — never a guess they
+      // didn't see. It's a strict slug, so it can't carry anything but [a-z0-9-] into the Vercel
+      // request or the database. After the first deploy it's ignored: the link doesn't move.
+      const slug = body?.name;
+      if (!proj.vercelProject) {
+        if (slug === undefined) { set.status = 400; return { error: "name_required" }; }
+        if (!isValidSlug(slug)) { set.status = 400; return { error: "invalid_name" }; }
       }
-      vercelProject = name;
-    }
+      const live = getLive(params.id);
+      const session = live?.session;
+      if (!live || !session) { set.status = 409; return { error: "not_running" }; }
+      if (live.runActive) { set.status = 409; return { error: "run_active" }; }
+      if (live.deploying) { set.status = 409; return { error: "deploy_in_progress" }; }
+      live.deploying = true; // set before any await, so a double click can't start two
 
-    void deployProject({
-      projectId: params.id,
-      vercelProject,
-      exportSource: () => session.exportSource(),
-      client: vercel,
-      emit: (event, data) => publish(live, event, data),
-      save: async (r) => {
-        await db.update(project)
-          .set({ deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() }) // the name was reserved before deploying
-          .where(eq(project.id, params.id));
-      },
-    }).finally(() => { live.deploying = false; });
-    set.status = 202;
-    return { ok: true };
+      // First deploy: claim the name in Postgres (atomic, see reserve.ts), then make sure the
+      // Vercel team doesn't already have a project by it that isn't an Orin app.
+      let vercelProject = proj.vercelProject;
+      if (!vercelProject) {
+        const name = vercelProjectName(proj.id, slug!);
+        try {
+          if ((await reserveVercelProject(proj.id, name)) === "taken") {
+            live.deploying = false;
+            set.status = 409;
+            return { error: "name_taken" };
+          }
+          if (await vercel.projectExists(name)) {
+            await releaseVercelProject(proj.id, name);
+            live.deploying = false;
+            set.status = 409;
+            return { error: "name_taken" };
+          }
+        } catch (e) {
+          live.deploying = false;
+          throw e;
+        }
+        vercelProject = name;
+      }
+
+      handedOff = true;
+      void deployProject({
+        projectId: params.id,
+        vercelProject,
+        exportSource: () => session.exportSource(),
+        client: vercel,
+        emit: (event, data) => publish(live, event, data),
+        save: async (r) => {
+          await db.update(project)
+            .set({ deployUrl: r.url, deployedCommit: r.commit, deployedAt: new Date() }) // the name was reserved before deploying
+            .where(eq(project.id, params.id));
+        },
+      }).finally(() => { live.deploying = false; release(); });
+      set.status = 202;
+      return { ok: true };
+    } finally { if (!handedOff) release(); }
   }, { body: t.Optional(t.Object({ name: t.Optional(t.String()) })) })
+  .delete("/projects/:id/deploy", async ({ params, request, set }) => {
+    const who = await authorize(request);
+    if (!who.ok) { set.status = who.status; return { error: who.error }; }
+    if (who.limited) { set.status = 403; return { error: "deploy_not_allowed" }; }
+    const release = acquireDeployment(params.id);
+    if (!release) { set.status = 409; return { error: "deploy_in_progress" }; }
+    try {
+      const [proj] = await db.select().from(project)
+        .where(and(eq(project.id, params.id), eq(project.userId, who.userId))).limit(1);
+      if (!proj) { set.status = 404; return { error: "project_not_found" }; }
+      if (!proj.vercelProject) return { ok: true };
+      const vercel = vercelFromEnv();
+      if (!vercel) { set.status = 503; return { error: "deploy_unconfigured" }; }
+      await vercel.unpublish(proj.vercelProject, proj.id);
+      // Clear only after remote deletion succeeds. A failed DB write is retryable:
+      // the remote 404 is treated as already unpublished.
+      await db.update(project).set({ vercelProject: null, deployUrl: null, deployedCommit: null, deployedAt: null })
+        .where(eq(project.id, proj.id));
+      const live = getLive(proj.id);
+      if (live) publish(live, "deploy_unpublished");
+      return { ok: true };
+    } catch (e) {
+      console.error("unpublish_failed", String(e));
+      set.status = 502;
+      return { error: "unpublish_failed" };
+    } finally { release(); }
+  })
   .get(
     "/agent/stream",
     async function* ({ query, request }) {

@@ -41,9 +41,9 @@ export function vercelFromEnv(): VercelClient | null {
 
 // The address to share. A production deployment gets the project's stable aliases besides its
 // per-deployment url; the shortest *.vercel.app one is the project's own name.
-export function publicUrl(d: Pick<Deployment, "url" | "alias">): string {
+export function publicUrl(d: Pick<Deployment, "url" | "alias">, projectName?: string): string {
   const aliases = (d.alias ?? []).filter((a) => a.endsWith(".vercel.app")).sort((a, b) => a.length - b.length);
-  return `https://${aliases[0] ?? d.url}`;
+  return `https://${aliases[0] ?? (projectName ? `${projectName}.vercel.app` : d.url)}`;
 }
 
 export class VercelClient {
@@ -117,6 +117,28 @@ export class VercelClient {
     }
   }
 
+  // Resolve the stored name to an immutable ID and verify Orin's deployment
+  // metadata before deleting. Never accept a remote project name from the caller.
+  async unpublish(name: string, orinProjectId: string): Promise<void> {
+    let remote: { id: string };
+    try {
+      remote = await this.call("GET", `/v9/projects/${encodeURIComponent(name)}`);
+    } catch (e) {
+      if (e instanceof VercelError && e.status === 404) return;
+      throw e;
+    }
+    const history = await this.call<{ deployments: { meta?: Record<string, string> }[] }>(
+      "GET", "/v6/deployments", { query: { projectId: remote.id, limit: "1" } });
+    if (history.deployments[0]?.meta?.orinProjectId !== orinProjectId) {
+      throw new Error("Deployment ownership could not be verified. Nothing was deleted.");
+    }
+    try {
+      await this.call("DELETE", `/v9/projects/${encodeURIComponent(remote.id)}`);
+    } catch (e) {
+      if (!(e instanceof VercelError && e.status === 404)) throw e;
+    }
+  }
+
   getDeployment(id: string): Promise<Deployment> {
     return this.call<Deployment>("GET", `/v13/deployments/${id}`);
   }
@@ -139,7 +161,9 @@ export class VercelClient {
     const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
     for (;;) {
       const res = await this.fetch(url, { redirect: "manual" }).catch(() => null);
-      if (res && res.status !== 404) return true;
+      const location = res?.headers.get("location") ?? "";
+      const loginRedirect = /vercel\.com\/sso-api(?:[/?#]|$)/i.test(location);
+      if (res && res.status !== 404 && !loginRedirect) return true;
       if (Date.now() > deadline) return false;
       await this.sleep(opts.intervalMs ?? 2_000);
     }

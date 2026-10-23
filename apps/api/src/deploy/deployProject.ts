@@ -29,7 +29,7 @@ export async function deployProject(s: DeploySeams): Promise<DeployResult | null
       s.emit("deploy_failed", { deploymentId: created.id, message: done.errorMessage ?? `build ${done.readyState.toLowerCase()}`, log });
       return null;
     }
-    const result = { url: publicUrl(done), commit: source.commit, deploymentId: done.id, vercelProject: s.vercelProject };
+    const result = { url: publicUrl(done, s.vercelProject), commit: source.commit, deploymentId: done.id, vercelProject: s.vercelProject };
     // Saved either way — the deployment exists and the alias will come up; `slow` only tells
     // the page the link may need a moment.
     const serving = await s.client.waitServing(result.url);

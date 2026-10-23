@@ -19,6 +19,8 @@ import { cn } from '@/lib/utils'
 const BuilderSheet = lazy(() => import('@/components/BuilderSheet').then((m) => ({ default: m.BuilderSheet })))
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { stepsLeftLabel, type Access } from '@/lib/access'
+import { deployErrorText, type DeployInfo } from '@/lib/deploy'
+import { DeployResult, PublishControl, PublishDialog, UnpublishDialog } from '@/components/Publish'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -53,6 +55,12 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   // Set when the server closed the session on purpose (another project opened, a rewind in
   // another tab) — then we stop instead of auto-reconnecting, and say why.
   const [closedReason, setClosedReason] = useState<string | null>(null)
+  // Publishing (spec 12). The info is the server's: whether this account may publish, the
+  // stored link, and for a first publish the dialog's example + fixed suffix.
+  const [unpublishOpen, setUnpublishOpen] = useState(false)
+  const [deployInfo, setDeployInfo] = useState<DeployInfo | null>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [publishOpen, setPublishOpen] = useState(false)
   const esRef = useRef<EventSource | null>(null)
   const feedEndRef = useRef<HTMLDivElement | null>(null)
   // Consecutive failed connection attempts, for reconnect backoff.
@@ -74,6 +82,9 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
     getJSON<Snap[]>(`/projects/${project.id}/snapshots`, []).then(setSnapshots)
   }
   useEffect(refreshSnapshots, [project.id, reloadKey])
+
+  const refreshDeploy = () => getJSON<DeployInfo | null>(`/projects/${project.id}/deploy`, null).then((info) => { setDeployInfo(info); return info })
+  useEffect(() => { void refreshDeploy() }, [project.id, reloadKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the persisted transcript and put it ahead of whatever live events have arrived.
   function loadHistory(isAlive: () => boolean = () => true) {
@@ -164,6 +175,9 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
         setPending({ callId: e.callId, question: e.question, options: e.options ?? [] })
       }
       if (e.event === 'final') refreshSnapshots() // a run finished — new rewind points
+      // From any tab: the stream is where a publish's progress and outcome arrive.
+      if (e.event === 'deploy_started') setPublishing(true)
+      if (e.event === 'deploy_ready' || e.event === 'deploy_failed' || e.event === 'deploy_unpublished') { setPublishing(false); void refreshDeploy() }
     }
     return () => {
       es.close() // leaving detaches; the server keeps the session for a grace period
@@ -192,6 +206,34 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
     if (!sessionId || !pending || !value.trim()) return
     postJSON(`/agent/${sessionId}/answer`, { callId: pending.callId, answer: value })
     setPending(null); setAnswer('')
+  }
+
+  // Start a publish. A first one goes through the dialog (the name is the user's to type); after
+  // that the link is fixed and Update publishes straight away. Resolves to an error to show in
+  // the dialog, or null once the server has accepted it — the outcome arrives on the stream.
+  async function startPublish(name?: string): Promise<string | null> {
+    const res = await postJSON(`/projects/${project.id}/deploy`, name ? { name } : {})
+    if (res.status === 202) { setPublishing(true); setPublishOpen(false); return null }
+    const code = String(((await res.json().catch(() => ({}))) as { error?: string }).error ?? '')
+    if (!name) toast.error(deployErrorText(code))
+    return deployErrorText(code)
+  }
+
+  async function unpublish(): Promise<string | null> {
+    const res = await fetch(`${API}/projects/${project.id}/deploy`, { method: 'DELETE', credentials: 'include' })
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { error?: string }
+      return body.error === 'deploy_in_progress' ? 'Wait for publishing to finish, then try again.' : 'Could not unpublish. Your saved deployment details have been kept; try again.'
+    }
+    await refreshDeploy()
+    toast.success('Unpublished. Your code and preview are still here.')
+    return null
+  }
+
+  async function onPublishClick() {
+    if (deployInfo?.vercelProject) { void startPublish(); return }
+    await refreshDeploy() // the example comes from the app as it is now
+    setPublishOpen(true)
   }
 
   // Reopen the project on a fresh session. Everything on screen belongs to the old
@@ -395,7 +437,20 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
               <span role="status" className="sr-only">{statusHead}</span>
               {statusRest.length > 0 && <span className="text-muted-foreground">· {statusRest.join(' · ')}</span>}
             </div>
-            <div className="flex items-center gap-0.5 text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-0.5 text-muted-foreground">
+              {deployInfo?.canDeploy && (
+                <div className="mr-1.5 min-w-0">
+                  <PublishControl
+                    info={deployInfo}
+                    publishing={publishing}
+                    // Edits since the last publish: the newest rewind point isn't what's live.
+                    outdated={snapshots.length > 0 && snapshots[snapshots.length - 1]!.commitHash !== deployInfo.deployedCommit}
+                    disabled={!sessionId || status.building || connection !== 'open' || pending !== null}
+                    onPublish={() => void onPublishClick()}
+                    onUnpublish={() => setUnpublishOpen(true)}
+                  />
+                </div>
+              )}
               <Button variant="ghost" size="icon-sm" disabled={!previewUrl} onClick={() => setFrameKey((k) => k + 1)} aria-label="Reload preview">
                 <RotateCw />
               </Button>
@@ -453,6 +508,10 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
       </AlertDialog>
   )
 
+  const publishDialog = deployInfo && !deployInfo.vercelProject && (
+    <PublishDialog info={deployInfo} open={publishOpen} onOpenChange={setPublishOpen} onPublish={(slug) => startPublish(slug)} />
+  )
+
   // Phone: the preview IS the screen, with the chat as a drag-up sheet. Below `md` the preview
   // used to be hidden entirely — and a guest link opened on a phone is the recruiter path, so
   // watching the app get built is the whole point of being there (spec 9).
@@ -465,6 +524,8 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
         <main className="flex min-h-0 flex-1 px-3 pb-3">{previewPane}</main>
         <Suspense fallback={null}><BuilderSheet status={status} composer={chatComposer}>{chatLog}</BuilderSheet></Suspense>
         {rewindDialog}
+        {publishDialog}
+        <UnpublishDialog open={unpublishOpen} onOpenChange={setUnpublishOpen} onConfirm={unpublish} />
       </div>
     )
   }
@@ -474,6 +535,8 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
       <aside className="flex min-h-0 flex-col md:border-r">{chatHeader}{chatLog}{chatComposer}</aside>
       <main className="hidden min-w-0 p-5 md:flex">{previewPane}</main>
       {rewindDialog}
+      {publishDialog}
+        <UnpublishDialog open={unpublishOpen} onOpenChange={setUnpublishOpen} onConfirm={unpublish} />
     </div>
   )
 }
@@ -600,6 +663,9 @@ function FeedRow({ event, onAnswer, onContinue }: { event: AgentEvent; onAnswer:
         {continueButton && <div className="pl-5.5">{continueButton}</div>}
       </Timed>
     )
+  }
+  if (kind === 'deploy') {
+    return <Timed ts={event.ts}><DeployResult event={event} /></Timed>
   }
   if (kind === 'error') {
     return <p className="pl-11 text-xs text-destructive">{errorText(event)}</p>

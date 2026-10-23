@@ -123,6 +123,13 @@ describe("VercelClient", () => {
     expect(visits[0]!.headers.Authorization).toBeUndefined(); // checked as a visitor would see it
   });
 
+  test("does not treat Vercel's SSO redirect as a public app response", async () => {
+    const client = new VercelClient({ token: "t", fetch: (async () => new Response(null, {
+      status: 302, headers: { location: "https://vercel.com/sso-api?url=https%3A%2F%2Fprivate.vercel.app" },
+    })) as unknown as typeof fetch, sleep: async () => {} });
+    expect(await client.waitServing("https://private.vercel.app", { timeoutMs: 0 })).toBe(false);
+  });
+
   test("tells an existing team project from a free name", async () => {
     const { client } = fakeVercel(["READY"]);
     expect(await client.projectExists("portfolio-1a2b")).toBe(true); // something already lives there
@@ -169,6 +176,7 @@ describe("naming and URLs", () => {
 
   test("the shared URL is the project's shortest vercel.app alias", () => {
     expect(publicUrl({ url: "orin-x-abc.vercel.app", alias: ["orin-x-team.vercel.app", "orin-x.vercel.app"] })).toBe("https://orin-x.vercel.app");
+    expect(publicUrl({ url: "orin-x-abc.vercel.app" }, "orin-x")).toBe("https://orin-x.vercel.app");
     expect(publicUrl({ url: "orin-x-abc.vercel.app" })).toBe("https://orin-x-abc.vercel.app");
   });
 });
