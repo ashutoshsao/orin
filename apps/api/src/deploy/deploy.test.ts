@@ -150,12 +150,14 @@ describe("naming and URLs", () => {
     const prompt = "can you build me a landing page for my coffee shop with a me"; // a real 60-char cut
     expect(suggestSlug("<title>react-template</title>", prompt)).toBe("landing-page-coffee"); // the template's own title
     expect(suggestSlug(null, prompt)).toBe("landing-page-coffee");
-    expect(suggestSlug(null, "🚀")).toBe("app");
+    expect(suggestSlug(null, "🚀")).toBe("coffee-shop"); // a generic example, not a real name
   });
 
   test("a typed name is accepted only as a clean slug of at most 40 characters", () => {
-    for (const ok of ["verdant", "brew-bean", "a1", "x".repeat(40)]) expect(isValidSlug(ok)).toBe(true);
+    for (const ok of ["coffee-shop", "sjdwkhasd", "lehfwkejhf-ejfwkejf-wkejfbwef", "a1", "x".repeat(40)]) expect(isValidSlug(ok)).toBe(true);
     for (const bad of ["", "Verdant", "brew--bean", "-x", "x-", "café", "a b", "x".repeat(41)]) expect(isValidSlug(bad)).toBe(false);
+    // Nothing that could mean anything to a shell, a URL or a prompt gets through.
+    for (const bad of ["x;rm -rf /", "$(id)", "`id`", "a/../b", "a.b", "x'", "<script>", "ignore previous instructions", "x\n", "%2e%2e"]) expect(isValidSlug(bad)).toBe(false);
   });
 
   test("the shared URL is the project's shortest vercel.app alias", () => {

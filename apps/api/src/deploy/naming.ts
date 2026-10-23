@@ -26,11 +26,13 @@ export const isValidSlug = (s: string) => s.length <= SLUG_MAX && SLUG.test(s);
 export const idSuffix = (projectId: string) => projectId.replace(/-/g, "").slice(0, 4);
 export const vercelProjectName = (projectId: string, slug: string) => `${slug || "app"}-${idSuffix(projectId)}`;
 
-// The suggestion pre-filled in the publish dialog. Project names are the first prompt cut at
-// 60 characters ("can you build me a landing page for my c…"), so they make bad links. The
-// app's own <title> is usually its real name — the agent sets one — and costs nothing to read.
+// The example shown as the publish dialog's placeholder — a hint, never used unless typed.
+// Project names are the first prompt cut at 60 characters ("can you build me a landing page
+// for my c…"), so they make bad examples. The app's own <title> is usually its real name — the
+// agent sets one — and costs nothing to read. It's model-written, so it's untrusted: slugify()
+// reduces it to [a-z0-9-] before anything uses it.
 export function suggestSlug(indexHtml: string | null, projectName: string): string {
-  return slugify(appTitle(indexHtml) ?? "") || slugify(keyWords(projectName)) || "app";
+  return slugify(appTitle(indexHtml) ?? "") || slugify(keyWords(projectName)) || "coffee-shop";
 }
 
 const DEFAULT_TITLES = new Set(["react-template", "vite + react + ts", "vite + react"]);

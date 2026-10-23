@@ -303,9 +303,9 @@ export const app = new Elysia()
   // Needs the open builder (the source is read from the live sandbox) and no turn mid-way
   // (HEAD is only a finished round between turns). Answers at once — the build takes
   // 30–60s, and its progress and outcome arrive as deploy_* events on the stream.
-  // What the publish dialog needs. Before the first deploy: a suggested name (from the app's
-  // <title>) and the fixed id suffix it will carry. After: the stored link, which no longer
-  // changes. `canDeploy` is the server's answer, so the page never guesses at tiers.
+  // What the publish dialog needs. Before the first deploy: an example name for the field's
+  // placeholder (from the app's <title>) and the fixed id suffix the link will carry. After:
+  // the stored link, which no longer changes. `canDeploy` is the server's answer, so the page never guesses at tiers.
   .get("/projects/:id/deploy", async ({ params, request, set }) => {
     const who = await authorize(request);
     if (!who.ok) { set.status = who.status; return { error: who.error }; }
@@ -319,7 +319,7 @@ export const app = new Elysia()
     const stored = { vercelProject: proj.vercelProject, deployUrl: proj.deployUrl, deployedCommit: proj.deployedCommit, deployedAt: proj.deployedAt };
     if (proj.vercelProject) return { ...stored, canDeploy };
     const html = (await getLive(params.id)?.session?.readIndexHtml()) ?? null;
-    return { ...stored, canDeploy, suggestion: suggestSlug(html, proj.name), suffix: idSuffix(proj.id) };
+    return { ...stored, canDeploy, example: suggestSlug(html, proj.name), suffix: idSuffix(proj.id) };
   })
   .post("/projects/:id/deploy", async ({ params, body, request, set }) => {
     const who = await authorize(request);
@@ -333,9 +333,14 @@ export const app = new Elysia()
       .where(and(eq(project.id, params.id), eq(project.userId, who.userId)))
       .limit(1);
     if (!proj) { set.status = 404; return { error: "project_not_found" }; }
-    // The name is chosen once, in the publish dialog; after the first deploy it's ignored.
+    // The first deploy needs a name the user typed in the publish dialog — never a guess they
+    // didn't see. It's a strict slug, so it can't carry anything but [a-z0-9-] into the Vercel
+    // request or the database. After the first deploy it's ignored: the link doesn't move.
     const slug = body?.name;
-    if (!proj.vercelProject && slug !== undefined && !isValidSlug(slug)) { set.status = 400; return { error: "invalid_name" }; }
+    if (!proj.vercelProject) {
+      if (slug === undefined) { set.status = 400; return { error: "name_required" }; }
+      if (!isValidSlug(slug)) { set.status = 400; return { error: "invalid_name" }; }
+    }
     const live = getLive(params.id);
     const session = live?.session;
     if (!live || !session) { set.status = 409; return { error: "not_running" }; }
@@ -345,7 +350,7 @@ export const app = new Elysia()
     live.deploying = true;
     void deployProject({
       projectId: params.id,
-      vercelProject: proj.vercelProject ?? vercelProjectName(proj.id, slug ?? suggestSlug(await session.readIndexHtml(), proj.name)),
+      vercelProject: proj.vercelProject ?? vercelProjectName(proj.id, slug!),
       exportSource: () => session.exportSource(),
       client: vercel,
       emit: (event, data) => publish(live, event, data),
