@@ -17,9 +17,9 @@ export const PROVIDERS = {
   deepseek: {
     label: "DeepSeek",
     baseURL: "https://api.deepseek.com",
-    defaultModel: "deepseek-v4.1-flash-expires-on-0910",
+    defaultModel: "deepseek-flash",
     models: [
-      { id: "deepseek-v4.1-flash-expires-on-0910", label: "v4.1 Flash — fast, what Orin builds with" },
+      { id: "deepseek-flash", label: "V4.1 Flash — fast, what Orin builds with" },
       { id: "deepseek-v4-pro", label: "v4 Pro — slower, more reasoning" },
     ] as ModelChoice[],
     envKey: "DEEPSEEK_API_KEY",
