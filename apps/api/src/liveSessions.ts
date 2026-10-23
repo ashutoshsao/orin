@@ -6,14 +6,16 @@ import type { AgentEvent, AgentSession } from "./agent/agent";
 // sandbox. So any dropped connection (a network blip, a sleeping laptop) killed a build
 // mid-change — twice in one day, each leaving a half-finished edit behind. Now a stream is
 // just a *subscriber*: it attaches, detaches, and can come back. The session keeps
-// running while nobody is watching, and is only closed after GRACE_MS with no subscribers.
+// running while nobody is watching, and is only closed after the grace period with no
+// subscribers — counted from when the turn ends, so closing the tab doesn't cut a build short.
 //
 // Every broadcast event gets an increasing `id` (sent as the SSE `id:` field) and is
 // kept in a bounded buffer, so a reconnecting page can say "I saw up to id N" and get
 // exactly what it missed — the textbook SSE resume pattern.
 
-// How long a session outlives its last viewer. Overridable so tests needn't wait a minute.
-const GRACE_MS = Number(process.env.ORIN_GRACE_MS ?? 60_000);
+// How long a session outlives its last viewer. Overridable so tests needn't wait a minute;
+// read per use so a test can set it after import.
+const graceMs = () => Number(process.env.ORIN_GRACE_MS ?? 60_000);
 const BUFFER_MAX = 2_000;
 const RUN_ENDS = new Set(["final", "error", "exception", "max_iterations_reached", "budget_exhausted", "budget_error"]);
 
@@ -57,6 +59,7 @@ function broadcast(live: Live, e: AgentEvent) {
   else if (ev.event === "llm_call" && typeof ev.iteration === "number") live.step = ev.iteration;
   else if (ev.event === "tool_call") live.pendingAsk = undefined; // an answered question's round
   if (RUN_ENDS.has(ev.event)) { live.runActive = false; live.pendingAsk = undefined; }
+  if (RUN_ENDS.has(ev.event) || ev.event === "ask_user") startGraceIfIdle(live);
 
   for (const sub of live.subscribers) sub.push(ev);
 }
@@ -110,13 +113,21 @@ export function subscribe(live: Live, sub: Subscriber, after?: number): { replay
   return { replay, resumed: live.session !== null || live.buffer.length > 0 };
 }
 
-// Detach a stream. The last one to leave starts the grace timer; if nobody comes back
-// in time, the session (and its sandbox) is closed.
+// Detach a stream. The last one to leave starts the grace timer, unless a turn is still
+// running — then the turn's end starts it. If nobody comes back in time, the session (and
+// its sandbox) is closed.
 export function unsubscribe(live: Live, sub: Subscriber) {
   live.subscribers.delete(sub);
-  if (live.subscribers.size === 0 && !live.closed && !live.grace) {
-    live.grace = setTimeout(() => void closeLive(live.projectId), GRACE_MS);
-  }
+  startGraceIfIdle(live);
+}
+
+// Nothing needs the session: no viewer, and no turn mid-way. A turn parked on ask_user
+// counts as idle — it waits on a person, who may not come back. A running turn is bounded
+// by the loop ceiling, the step budget and E2B's sandbox lifetime, so waiting for it is safe.
+function startGraceIfIdle(live: Live) {
+  if (live.subscribers.size > 0 || live.closed || live.grace) return;
+  if (live.runActive && !live.pendingAsk) return;
+  live.grace = setTimeout(() => void closeLive(live.projectId), graceMs());
 }
 
 // Why a session was closed while pages may still be watching. Sent to them as a
