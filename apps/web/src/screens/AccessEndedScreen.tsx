@@ -4,7 +4,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Wordmark } from '@/components/brand'
 
 // Shown instead of home when a signed-in account's access has expired (or it has none).
-// Access ends automatically; the projects themselves aren't deleted — say so, calmly.
+// Expired trial data is retained for seven more days before scheduled cleanup.
 export function AccessEndedScreen({ expired }: { expired: boolean }) {
   return (
     <div className="relative grid min-h-dvh place-items-center bg-background px-6">
@@ -16,7 +16,7 @@ export function AccessEndedScreen({ expired }: { expired: boolean }) {
         </h1>
         <p className="mt-3 text-balance text-sm text-muted-foreground">
           {expired
-            ? 'Thanks for trying Orin. Your access has expired, but what you built is still saved.'
+            ? 'Thanks for trying Orin. Your access has expired. Trial apps and saved data are scheduled for deletion seven days after expiry.'
             : "This account isn't set up to build with Orin."}
         </p>
         <Button variant="outline" className="mt-8" onClick={() => authClient.signOut()}>

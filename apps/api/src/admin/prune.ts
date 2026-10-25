@@ -1,14 +1,12 @@
-import { and, eq, isNotNull, lt, ne } from "drizzle-orm";
-import { accountAccess, db, project, user } from "@repo/db";
+import { and, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
+import { accountAccess, allowlist, db, project, user } from "@repo/db";
+import { vercelFromEnv, type VercelClient } from "../deploy/vercel";
 import { r2 } from "../persistence/r2";
 
-// Manual prune of limited-tier accounts (7d). Access expiry is automatic; deletion is NOT —
-// no CronJob, no R2 lifecycle rule. Guest data is small, and deletion bugs are the ones you
-// can't undo, so this runs by hand, dry by default.
-//
-// R2 and Postgres go together or not at all: a bundle deleted under a kept conversation
-// would restore a bare template beneath history describing code that no longer exists. So
-// each account's objects are removed first and its rows only if that succeeded.
+// CLI and scheduled cleanup share this code. Keep expired trial data for another
+// seven days; never prune unlimited accounts. External deletes precede the DB delete
+// so a failure leaves the resource references available for the next run to retry.
+export const PRUNE_RETENTION = "7d";
 
 export type PruneCandidate = {
   userId: string;
@@ -16,76 +14,146 @@ export type PruneCandidate = {
   tier: string;
   expiredAt: Date;
   projects: number;
+  deployments: number;
   objects: number;
   bytes: number;
 };
 
-export type PruneResult = { deleted: PruneCandidate[]; failed: { userId: string; message: string }[] };
+export type PruneResult = {
+  deleted: PruneCandidate[];
+  skipped: PruneCandidate[];
+  failed: { userId: string; message: string }[];
+};
+
+// Only these operations are exposed to tests; production uses the configured R2 bucket.
+export type PruneStorage = {
+  list: (opts: { prefix: string; maxKeys: number; startAfter?: string }) => Promise<{
+    contents?: { key: string; size?: number }[];
+    isTruncated?: boolean;
+  }>;
+  delete: (key: string) => Promise<unknown>;
+};
+type PruneOptions = {
+  olderThanMs?: number;
+  storage?: PruneStorage;
+  vercel?: Pick<VercelClient, "unpublish"> | null;
+};
 
 // "7d" / "36h" / "90m" → milliseconds.
 export function parseAge(spec: string): number {
   const m = /^(\d+)\s*([dhm])$/.exec(spec.trim());
   if (!m) throw new Error(`bad --older-than: ${spec} (use 7d, 36h, 90m)`);
   const unit = { d: 86_400_000, h: 3_600_000, m: 60_000 }[m[2] as "d" | "h" | "m"];
-  return Number(m[1]) * unit;
+  const age = Number(m[1]) * unit;
+  if (!Number.isSafeInteger(age)) throw new Error("--older-than is too large");
+  return age;
 }
 
-const guestPrefix = (userId: string) => `guests/${userId}/`;
+function cutoffFor(olderThanMs: number) {
+  if (!Number.isFinite(olderThanMs) || olderThanMs < 0) throw new Error("retention must be a non-negative duration");
+  const cutoff = new Date(Date.now() - olderThanMs);
+  if (!Number.isFinite(cutoff.getTime())) throw new Error("retention is too large");
+  return cutoff;
+}
 
-async function measure(userId: string): Promise<{ objects: number; bytes: number }> {
+// A downgraded account may still have bundles from when it was unlimited.
+// Both prefixes are scoped to the same revalidated owner, never another account.
+const accountPrefixes = (userId: string) => [`guests/${userId}/`, `users/${userId}/`];
+
+async function measure(userId: string, storage: PruneStorage): Promise<{ objects: number; bytes: number }> {
   let objects = 0;
   let bytes = 0;
-  let after: string | undefined;
-  for (;;) {
-    const page = await r2.list({ prefix: guestPrefix(userId), maxKeys: 1000, startAfter: after });
-    for (const o of page.contents ?? []) {
-      objects++;
-      bytes += o.size ?? 0;
+  for (const prefix of accountPrefixes(userId)) {
+    let after: string | undefined;
+    for (;;) {
+      const page = await storage.list({ prefix, maxKeys: 1000, startAfter: after });
+      for (const o of page.contents ?? []) {
+        objects++;
+        bytes += o.size ?? 0;
+      }
+      if (!page.isTruncated || !page.contents?.length) break;
+      after = page.contents.at(-1)!.key;
     }
-    if (!page.isTruncated || !page.contents?.length) return { objects, bytes };
-    after = page.contents.at(-1)!.key;
   }
+  return { objects, bytes };
 }
 
-// Limited-tier accounts whose access expired longer ago than `olderThanMs`. Allowlist
-// accounts are excluded in SQL, not by a later filter — they must never be candidates.
-export async function findPruneCandidates(olderThanMs: number): Promise<PruneCandidate[]> {
-  const cutoff = new Date(Date.now() - olderThanMs);
+// Preview only: no provider calls that delete anything. An allowlisted email is also
+// protected when its access row has not yet been upgraded to the allowlist tier.
+export async function findPruneCandidates(olderThanMs: number, storage: PruneStorage = r2): Promise<PruneCandidate[]> {
+  const cutoff = cutoffFor(olderThanMs);
   const rows = await db
     .select({ userId: accountAccess.userId, email: user.email, tier: accountAccess.tier, expiredAt: accountAccess.expiresAt })
     .from(accountAccess)
     .innerJoin(user, eq(user.id, accountAccess.userId))
-    .where(and(ne(accountAccess.tier, "allowlist"), isNotNull(accountAccess.expiresAt), lt(accountAccess.expiresAt, cutoff)));
+    .where(and(
+      inArray(accountAccess.tier, ["guest", "byok"]),
+      isNotNull(accountAccess.stepsLimit),
+      isNotNull(accountAccess.expiresAt),
+      lt(accountAccess.expiresAt, cutoff),
+      notExists(db.select().from(allowlist).where(eq(allowlist.email, sql`lower(${user.email})`))),
+    ));
 
   const out: PruneCandidate[] = [];
   for (const row of rows) {
-    const projects = await db.select({ id: project.id }).from(project).where(eq(project.userId, row.userId));
-    const { objects, bytes } = await measure(row.userId);
-    out.push({ ...row, expiredAt: row.expiredAt!, projects: projects.length, objects, bytes });
+    const projects = await db.select({ id: project.id, vercelProject: project.vercelProject }).from(project).where(eq(project.userId, row.userId));
+    const { objects, bytes } = await measure(row.userId, storage);
+    out.push({ ...row, expiredAt: row.expiredAt!, projects: projects.length, deployments: projects.filter(p => p.vercelProject !== null).length, objects, bytes });
   }
   return out;
 }
 
-// Delete for real: R2 objects first, then the user row (cascades access, projects, messages,
-// snapshots, guest links). An account whose R2 delete fails keeps ALL its rows.
-export async function prune(candidates: PruneCandidate[]): Promise<PruneResult> {
+export async function prune(candidates: PruneCandidate[], opts: PruneOptions = {}): Promise<PruneResult> {
+  const olderThanMs = opts.olderThanMs ?? parseAge(PRUNE_RETENTION);
+  cutoffFor(olderThanMs);
+  const storage = opts.storage ?? r2;
+  const vercel = opts.vercel === undefined ? vercelFromEnv() : opts.vercel;
   const deleted: PruneCandidate[] = [];
+  const skipped: PruneCandidate[] = [];
   const failed: PruneResult["failed"] = [];
   for (const c of candidates) {
     try {
-      let after: string | undefined;
-      for (;;) {
-        const page = await r2.list({ prefix: guestPrefix(c.userId), maxKeys: 1000, startAfter: after });
-        const keys = (page.contents ?? []).map((o) => o.key);
-        for (const key of keys) await r2.delete(key);
-        if (!page.isTruncated || keys.length === 0) break;
-        after = keys.at(-1);
-      }
-      await db.delete(user).where(eq(user.id, c.userId));
-      deleted.push(c);
+      const removed = await db.transaction(async (tx) => {
+        // Revalidate inside locks: a stale preview must not delete an account that
+        // was renewed or promoted. Concurrent prune invocations serialize here.
+        // Locking the user also blocks new projects during resource cleanup.
+        const [owner] = await tx.select({ email: user.email }).from(user).where(eq(user.id, c.userId)).for("update");
+        if (!owner) return false;
+        const [access] = await tx.select().from(accountAccess).where(eq(accountAccess.userId, c.userId)).for("update");
+        if (!access || !["guest", "byok"].includes(access.tier) || access.stepsLimit === null ||
+            !access.expiresAt || access.expiresAt >= cutoffFor(olderThanMs)) return false;
+        const [listed] = await tx.select().from(allowlist).where(eq(allowlist.email, owner.email.toLowerCase()));
+        if (listed) return false;
+
+        const projects = await tx.select({ id: project.id, vercelProject: project.vercelProject }).from(project)
+          .where(eq(project.userId, c.userId)).for("update");
+        for (const p of projects) {
+          if (!p.vercelProject) continue;
+          if (!vercel) throw new Error("Vercel cleanup is unconfigured; account and files kept");
+          // Resolves an immutable ID, checks Orin ownership metadata, and accepts
+          // remote 404s. A retry after a partial cleanup can safely repeat this.
+          await vercel.unpublish(p.vercelProject, p.id);
+        }
+
+        for (const prefix of accountPrefixes(c.userId)) {
+          let after: string | undefined;
+          for (;;) {
+            const page = await storage.list({ prefix, maxKeys: 1000, startAfter: after });
+            const keys = (page.contents ?? []).map(o => o.key);
+            for (const key of keys) await storage.delete(key);
+            if (!page.isTruncated || keys.length === 0) break;
+            after = keys.at(-1);
+          }
+        }
+        // Cascades projects, messages, snapshots, sessions and guest links. External
+        // deletes cannot roll back: failures retain rows, not necessarily all files.
+        await tx.delete(user).where(eq(user.id, c.userId));
+        return true;
+      });
+      (removed ? deleted : skipped).push(c);
     } catch (e) {
       failed.push({ userId: c.userId, message: String(e) });
     }
   }
-  return { deleted, failed };
+  return { deleted, skipped, failed };
 }

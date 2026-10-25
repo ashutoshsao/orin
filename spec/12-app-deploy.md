@@ -55,7 +55,8 @@ Vercel account. Full-stack apps get a Neon database that travels with the app wh
 - Does Hobby allow `transfer-request` + Marketplace stores via API, or is Pro needed?
 - Neon free-plan cap on Marketplace-provisioned DBs; exact store→project connect endpoint.
 - 60-min anonymous is a demo link, not hosting — guests may need a team deploy with prune, or no deploy.
-- `prune.ts` must also delete the Vercel project + Neon store of expired accounts.
+- Vercel cleanup is implemented in spec 13; Neon store cleanup remains required before provisioning
+  databases, along with ownership tracking for claimed/transferred resources.
 
 ## Progress
 
@@ -64,19 +65,21 @@ Vercel account. Full-stack apps get a Neon database that travels with the app wh
 - [x] A — allowlist publishing: source export, Vercel build, explicit link-name dialog, persistent
   toolbar URL, copy/open, Update and confirmed Unpublish are implemented. Production API 1.0.4
   has the publishing token configured; see the verification evidence below.
-- [ ] Release audit fixes in API 1.0.5: prepared in the working tree. Show a disabled Publish control
+- [x] Release audit fixes in API 1.0.5: deployed and verified at commit `d532545`. Show a disabled Publish control
   with an explanation when hosting is unconfigured, recover from network failures, restore publishing
   state when reopening, allow Unpublish without a running sandbox, and reject HTTP error pages in
-  readiness checks. Commit/tag and cluster rollout remain manual.
+  readiness checks. Commit/tag and cluster rollout were performed manually.
   Validation on 2026-10-25: 54 API tests and 29 web tests passed, including database name reservation,
   deployment ownership checks, reconnect state and the unavailable-publishing UI. API typecheck,
   web build/lint and a client-side Kubernetes manifest dry run passed.
-- [ ] Verify production Update preserves the URL and publishes the latest snapshot. The collected
-  production logs show an initial publish and unpublish, but no second publish of an edited app.
+- [x] Verify production Update preserves the URL: the user confirmed Publish → edit → Update works.
+  The separate log review below covers initial publish/unpublish; the Update check is user-reported.
 - [ ] A' — anonymous deploy (guest/byok) with expiry + claim link in the UI
 - [ ] B — claim: `POST /projects/:id/transfer-request` → claim URL
 - [ ] C — full-stack template + Marketplace Neon + dev branch in sandbox
-- [ ] Prune deletes deployed resources
+- [x] Prune deletes verified Orin Vercel projects before files and database rows (spec 13;
+  prepared for API 1.0.6 and its daily CronJob, not yet deployed).
+- [ ] Prune deletes Orin-owned Neon resources once database provisioning is implemented.
 
 ## Production verification (reviewed 2026-10-25)
 
