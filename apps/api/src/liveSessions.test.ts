@@ -36,6 +36,16 @@ describe("global sandbox cap for limited accounts", () => {
   });
 });
 
+test("a page reopened during publishing receives the current deployment state", async () => {
+  await open("publishing-reopen", "owner", false);
+  const live = getLive("publishing-reopen")!;
+  live.deploying = true;
+  const sub = { push: () => {}, end: () => {} };
+  expect(subscribe(live, sub).replay.some(e => e.event === "deploy_started")).toBe(true);
+  live.deploying = false;
+  expect(subscribe(live, sub).replay.some(e => e.event === "deploy_started")).toBe(false);
+});
+
 // Closing the tab mid-build used to start the 60s countdown at once, killing the sandbox
 // halfway through a turn. Now the countdown starts when the turn ends (or parks on ask_user).
 describe("grace period waits for the running turn", () => {

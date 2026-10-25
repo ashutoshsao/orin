@@ -212,11 +212,17 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   // that the link is fixed and Update publishes straight away. Resolves to an error to show in
   // the dialog, or null once the server has accepted it — the outcome arrives on the stream.
   async function startPublish(name?: string): Promise<string | null> {
-    const res = await postJSON(`/projects/${project.id}/deploy`, name ? { name } : {})
-    if (res.status === 202) { setPublishing(true); setPublishOpen(false); return null }
-    const code = String(((await res.json().catch(() => ({}))) as { error?: string }).error ?? '')
-    if (!name) toast.error(deployErrorText(code))
-    return deployErrorText(code)
+    let message: string
+    try {
+      const res = await postJSON(`/projects/${project.id}/deploy`, name ? { name } : {})
+      if (res.status === 202) { setPublishing(true); setPublishOpen(false); return null }
+      const code = String(((await res.json().catch(() => ({}))) as { error?: string }).error ?? '')
+      message = deployErrorText(code)
+    } catch {
+      message = 'Couldn’t reach the server. Check your connection and try again.'
+    }
+    if (!name) toast.error(message)
+    return message
   }
 
   async function unpublish(): Promise<string | null> {
@@ -438,7 +444,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
               {statusRest.length > 0 && <span className="text-muted-foreground">· {statusRest.join(' · ')}</span>}
             </div>
             <div className="flex min-w-0 items-center gap-0.5 text-muted-foreground">
-              {deployInfo?.canDeploy && (
+              {deployInfo && (deployInfo.canDeploy || deployInfo.unavailableReason === 'deploy_unconfigured') && (
                 <div className="mr-1.5 min-w-0">
                   <PublishControl
                     info={deployInfo}
@@ -536,7 +542,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
       <main className="hidden min-w-0 p-5 md:flex">{previewPane}</main>
       {rewindDialog}
       {publishDialog}
-        <UnpublishDialog open={unpublishOpen} onOpenChange={setUnpublishOpen} onConfirm={unpublish} />
+      <UnpublishDialog open={unpublishOpen} onOpenChange={setUnpublishOpen} onConfirm={unpublish} />
     </div>
   )
 }

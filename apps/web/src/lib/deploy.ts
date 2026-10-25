@@ -4,6 +4,7 @@
 // placeholder and the fixed `suffix` the link will carry. After: the stored link.
 export type DeployInfo = {
   canDeploy: boolean
+  unavailableReason?: 'deploy_not_allowed' | 'deploy_unconfigured' | null
   vercelProject: string | null
   deployUrl: string | null
   deployedCommit: string | null

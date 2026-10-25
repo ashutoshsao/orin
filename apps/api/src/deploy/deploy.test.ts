@@ -130,6 +130,13 @@ describe("VercelClient", () => {
     expect(await client.waitServing("https://private.vercel.app", { timeoutMs: 0 })).toBe(false);
   });
 
+  test("an error page is not a working public app", async () => {
+    for (const status of [401, 403, 404, 429, 500, 502, 503]) {
+      const client = new VercelClient({ token: "t", fetch: (async () => new Response(null, { status })) as unknown as typeof fetch });
+      expect(await client.waitServing("https://app.vercel.app", { timeoutMs: 0 })).toBe(false);
+    }
+  });
+
   test("tells an existing team project from a free name", async () => {
     const { client } = fakeVercel(["READY"]);
     expect(await client.projectExists("portfolio-1a2b")).toBe(true); // something already lives there

@@ -318,8 +318,9 @@ export const app = new Elysia()
       .limit(1);
     if (!proj) { set.status = 404; return { error: "project_not_found" }; }
     const canDeploy = !who.limited && vercelFromEnv() !== null;
-    const stored = { vercelProject: proj.vercelProject, deployUrl: proj.deployUrl, deployedCommit: proj.deployedCommit, deployedAt: proj.deployedAt };
-    if (proj.vercelProject) return { ...stored, canDeploy };
+    const unavailableReason = who.limited ? "deploy_not_allowed" : canDeploy ? null : "deploy_unconfigured";
+    const stored = { vercelProject: proj.vercelProject, deployUrl: proj.deployUrl, deployedCommit: proj.deployedCommit, deployedAt: proj.deployedAt, unavailableReason };
+    if (proj.vercelProject || !canDeploy) return { ...stored, canDeploy };
     const html = (await getLive(params.id)?.session?.readIndexHtml()) ?? null;
     return { ...stored, canDeploy, example: suggestSlug(html, proj.name), suffix: idSuffix(proj.id) };
   })

@@ -118,6 +118,7 @@ export function subscribe(live: Live, sub: Subscriber, after?: number): { replay
   const replay: StreamEvent[] = [];
   if (live.lastPreview) replay.push(live.lastPreview);
   if (live.runActive) replay.push({ ts: new Date().toISOString(), sessionId, event: "run_active", step: live.step });
+  if (live.deploying) replay.push({ ts: new Date().toISOString(), sessionId, event: "deploy_started" });
   if (live.pendingAsk) replay.push(live.pendingAsk);
   return { replay, resumed: live.session !== null || live.buffer.length > 0 };
 }

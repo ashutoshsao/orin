@@ -8,7 +8,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import type { AgentEvent } from '@/lib/api'
-import { bareHost, finalSlug, isSlug, slugInput, type DeployInfo } from '@/lib/deploy'
+import { bareHost, deployErrorText, finalSlug, isSlug, slugInput, type DeployInfo } from '@/lib/deploy'
 import { cn } from '@/lib/utils'
 
 // The publish control in the preview bar. Four states, one place:
@@ -33,9 +33,11 @@ export function PublishControl({ info, publishing, outdated, disabled, onPublish
   }
   if (!info.deployUrl) {
     return (
-      <Button variant="outline" size="xs" className="gap-1.5" disabled={disabled} onClick={onPublish}>
-        <Globe /> Publish
-      </Button>
+      <span title={info.canDeploy ? undefined : deployErrorText(info.unavailableReason ?? '')}>
+        <Button variant="outline" size="xs" className="gap-1.5" disabled={disabled || !info.canDeploy} onClick={onPublish}>
+          <Globe /> {info.canDeploy ? 'Publish' : 'Publish unavailable'}
+        </Button>
+      </span>
     )
   }
   return (
@@ -51,9 +53,9 @@ export function PublishControl({ info, publishing, outdated, disabled, onPublish
       </a>
       <CopyButton text={info.deployUrl} />
       <Button variant="ghost" size="icon-xs" aria-label="Open published app" onClick={() => window.open(info.deployUrl!, '_blank', 'noopener')}><ExternalLink /></Button>
-      <Button variant="ghost" size="xs" disabled={disabled} onClick={onUnpublish}>Unpublish</Button>
+      <Button variant="ghost" size="xs" disabled={!info.canDeploy} onClick={onUnpublish}>Unpublish</Button>
       {outdated && (
-        <Button variant="outline" size="xs" disabled={disabled} onClick={onPublish} title="Publish your latest changes">
+        <Button variant="outline" size="xs" disabled={disabled || !info.canDeploy} onClick={onPublish} title="Publish your latest changes">
           Update
         </Button>
       )}
@@ -81,10 +83,13 @@ export function PublishDialog({ info, open, onOpenChange, onPublish }: {
     e.preventDefault()
     if (!valid || sending) return
     setSending(true)
-    const err = await onPublish(slug)
-    setSending(false)
-    if (err) setError(err)
-    else { setValue(''); setError(null) }
+    try {
+      const err = await onPublish(slug)
+      if (err) setError(err)
+      else { setValue(''); setError(null) }
+    } catch {
+      setError('Couldn’t reach the server. Check your connection and try again.')
+    } finally { setSending(false) }
   }
 
   return (

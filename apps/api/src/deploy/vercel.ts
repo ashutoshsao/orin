@@ -163,8 +163,8 @@ export class VercelClient {
       const res = await this.fetch(url, { redirect: "manual" }).catch(() => null);
       const location = res?.headers.get("location") ?? "";
       const loginRedirect = /vercel\.com\/sso-api(?:[/?#]|$)/i.test(location);
-      if (res && res.status !== 404 && !loginRedirect) return true;
-      if (Date.now() > deadline) return false;
+      if (res && res.status >= 200 && res.status < 400 && !loginRedirect) return true;
+      if (Date.now() >= deadline) return false;
       await this.sleep(opts.intervalMs ?? 2_000);
     }
   }
