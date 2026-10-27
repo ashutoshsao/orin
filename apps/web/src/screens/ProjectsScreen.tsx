@@ -7,8 +7,9 @@ import { InputGroup, InputGroupAddon, InputGroupTextarea } from '@/components/ui
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Wordmark } from '@/components/brand'
 import { Kbd, KbdGroup } from '@/components/ui/kbd'
-import { stepsLeftLabel, type Access, type Byok } from '@/lib/access'
+import { type Access, type Byok } from '@/lib/access'
 import { ByokKeyForm } from '@/components/ByokKeyForm'
+import { TrialNotice } from '@/components/TrialNotice'
 
 // Home is the "describe an app" moment, not a dashboard: the composer is centered and
 // given the viewport, with saved projects kept quietly below it (and absent entirely
@@ -24,7 +25,6 @@ export function ProjectsScreen({ access, byok, onAccessChange, onOpen }: {
   const [creating, setCreating] = useState(false)
   const outOfSteps = access.stepsLeft === 0
   const needsKey = !!byok?.needsKey
-  const stepsLabel = stepsLeftLabel(access)
 
   useEffect(() => {
     let alive = true
@@ -65,13 +65,9 @@ export function ProjectsScreen({ access, byok, onAccessChange, onOpen }: {
         <p className="mt-5 text-balance text-base text-muted-foreground">
           Describe it in a sentence. You'll refine it as it comes together.
         </p>
-        {stepsLabel && (
-          <p className="mt-2 font-mono text-xs text-muted-foreground">
-            {outOfSteps ? 'Trial used up — your projects are still here to look at.' : `Trial · ${stepsLabel}`}
-          </p>
-        )}
+        <TrialNotice access={access} onAccessChange={onAccessChange} />
 
-        {needsKey ? (
+        {needsKey && !outOfSteps ? (
           <div className="mt-11 w-full">
             <ByokKeyForm onSaved={onAccessChange} />
           </div>

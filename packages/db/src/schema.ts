@@ -57,6 +57,8 @@ export const accountAccess = pgTable(
     stepsLimit: integer("steps_limit"),
     stepsUsed: integer("steps_used").notNull().default(0),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    dataPurgedAt: timestamp("data_purged_at", { withTimezone: true }), // project data removed; identity/budget retained
+    extensionRequestedAt: timestamp("extension_requested_at", { withTimezone: true }), // pending owner-approved continuation
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   // The reserve UPDATE's `steps_used < steps_limit` guard already stops overspend; this makes
@@ -67,8 +69,8 @@ export const accountAccess = pgTable(
 // One app being built, owned by a user.
 export const project = pgTable("project", {
   id: text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  // Cascades (7d): deleting a user removes their projects → messages + snapshots, so prune is
-  // one DELETE (R2 objects are removed by the prune script first — the DB can't reach them).
+  // Explicit user deletion cascades projects → messages + snapshots. Scheduled trial cleanup
+  // deletes project rows only, preserving the user and access/usage history (spec 14).
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   latestSnapshotKey: text("latest_snapshot_key"), // R2 key for codebase restore (M5b)

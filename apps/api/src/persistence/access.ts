@@ -85,6 +85,8 @@ export type AccessView = {
   stepsLeft: number | null; // null = unlimited
   expiresAt: string | null;
   expired: boolean;
+  dataPurgedAt: string | null;
+  extensionRequestedAt: string | null;
 };
 
 export async function getAccessView(userId: string): Promise<AccessView | null> {
@@ -97,6 +99,8 @@ export async function getAccessView(userId: string): Promise<AccessView | null> 
     stepsLeft: row.stepsLimit === null ? null : Math.max(0, row.stepsLimit - row.stepsUsed),
     expiresAt: row.expiresAt?.toISOString() ?? null,
     expired: !!row.expiresAt && row.expiresAt.getTime() <= Date.now(),
+    dataPurgedAt: row.dataPurgedAt?.toISOString() ?? null,
+    extensionRequestedAt: row.extensionRequestedAt?.toISOString() ?? null,
   };
 }
 

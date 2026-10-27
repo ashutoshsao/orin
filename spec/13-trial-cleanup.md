@@ -4,7 +4,9 @@
 
 Bound public-trial and invited-guest storage costs without leaving untracked hosted apps behind.
 Access still expires after its configured trial period; saved data is retained for another seven
-days, then a daily Kubernetes Job removes expired guest/BYOK accounts and their tracked resources.
+days, then a daily Kubernetes Job removes expired guest/BYOK project data and tracked resources.
+Account retention and continuation were added in spec 14 for API 1.0.7, superseding 1.0.6's
+whole-account deletion policy before the CronJob was enabled.
 
 ## Contract
 
@@ -17,7 +19,8 @@ days, then a daily Kubernetes Job removes expired guest/BYOK accounts and their 
   deletion. Database references survive failures for a later retry.
 - Delete verified Orin Vercel projects first, then that user's `guests/<userId>/` and `users/<userId>/`
   R2 objects across every listing page (including legacy bundles from a downgraded account), then
-  the user row (cascading projects, chats, snapshots, auth sessions and guest links).
+  project rows (cascading chats and snapshots). Keep the user profile, linked sign-in identity,
+  guest links and access/usage history. Record `data_purged_at` to skip already-cleaned trial cycles.
   Missing remote projects are already cleaned. Provider authorization/ownership failures keep the
   account and files. With no hosted projects, missing Vercel credentials do not block file cleanup.
 - This is a sequence of retryable deletions, not a distributed transaction. An external deletion
@@ -41,10 +44,10 @@ resources transferred to users. Anonymous temporary deployment cleanup belongs w
 
 - [x] Shared prune implementation with eligibility revalidation and Vercel → R2 → Postgres cleanup.
 - [x] Manual preview, deployment counts, explicit `--yes`, and per-account retry/skip reporting.
-- [x] Kubernetes CronJob manifest and ops release notes prepared for image 1.0.6.
+- [x] Kubernetes CronJob manifest and ops release notes prepared for image 1.0.7 (account retention).
 - [x] Expired-access screen states the retention policy.
 - [x] Validation: 18 cleanup/ownership tests passed, including real local Postgres + throwaway
   R2 objects, protected accounts, pagination, partial failures, retries and overlapping runs.
   API typecheck, web build/lint, a read-only CLI preview and Kubernetes server dry runs passed.
-- [ ] Manual release: commit/tag API 1.0.6, deploy it, preview production candidates, then apply
+- [ ] Manual release: commit/tag API 1.0.7, apply migration 0012 and deploy it, preview candidates, then apply
   `~/projects/ops/orin-app-k8s/09-trialCleanupCronjob.yml` to enable scheduled deletion.

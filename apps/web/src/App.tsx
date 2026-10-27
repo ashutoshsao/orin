@@ -21,6 +21,9 @@ export default function App() {
   const { data: session, isPending } = authClient.useSession()
   const [active, setActive] = useState<{ project: Project; firstPrompt?: string } | null>(null)
   const { access, byok, refresh: refreshAccess } = useAccess(!!session)
+  // After a renewed trial, return home if cleanup removed the previously open project.
+  const activeProjectWasPurged = !!(active && access?.dataPurgedAt &&
+    new Date(active.project.createdAt) <= new Date(access.dataPurgedAt))
   // The only URLs the app reads: /invite/<token> (7b) and /g/<token> (7c). Everything else
   // is one screen stack.
   const path = window.location.pathname
@@ -52,8 +55,8 @@ export default function App() {
       ) : isAdminPath ? (
         <Suspense fallback={blank}><AdminScreen /></Suspense>
       ) : !access || access.expired ? (
-        <AccessEndedScreen expired={!!access?.expired} />
-      ) : !active ? (
+        <AccessEndedScreen access={access ?? null} onAccessChange={refreshAccess} />
+      ) : !active || activeProjectWasPurged ? (
         <ProjectsScreen access={access} byok={byok} onAccessChange={refreshAccess} onOpen={(project, firstPrompt) => setActive({ project, firstPrompt })} />
       ) : (
         <Suspense fallback={blank}>

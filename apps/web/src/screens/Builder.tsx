@@ -18,7 +18,8 @@ import { cn } from '@/lib/utils'
 // Phones only: desktop never uses the sheet, so it shouldn't download vaul with the builder.
 const BuilderSheet = lazy(() => import('@/components/BuilderSheet').then((m) => ({ default: m.BuilderSheet })))
 import { useMediaQuery } from '@/lib/useMediaQuery'
-import { stepsLeftLabel, type Access } from '@/lib/access'
+import { type Access } from '@/lib/access'
+import { TrialNotice } from '@/components/TrialNotice'
 import { deployErrorText, type DeployInfo } from '@/lib/deploy'
 import { DeployResult, PublishControl, PublishDialog, UnpublishDialog } from '@/components/Publish'
 import {
@@ -35,7 +36,6 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
   onBack: () => void
 }) {
   const outOfSteps = access.stepsLeft === 0
-  const stepsLabel = stepsLeftLabel(access)
   const [events, setEvents] = useState<AgentEvent[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string | null>(null)
@@ -422,11 +422,7 @@ export function Builder({ project, firstPrompt, access, onAccessChange, onBack }
                 </InputGroup>
               </form>
             )}
-            {stepsLabel && (
-              <p className="mt-2 px-1 font-mono text-[11px] text-muted-foreground">
-                {outOfSteps ? 'Trial used up · your work is saved' : `Trial · ${stepsLabel}`}
-              </p>
-            )}
+            <TrialNotice access={access} onAccessChange={onAccessChange} compact />
           </div>
     </>
   )

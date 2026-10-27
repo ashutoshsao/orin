@@ -1,4 +1,4 @@
-// Delete expired guest / BYOK accounts, their deployments and R2 bundles. DRY BY DEFAULT:
+// Clean expired guest / BYOK project data; retain accounts and usage. DRY BY DEFAULT:
 //   bun run prune-guests                      → what would go
 //   bun run prune-guests --older-than 30d
 //   bun run prune-guests --yes                → actually delete
@@ -32,7 +32,7 @@ try {
     process.exit(0);
   }
   const { deleted, skipped, failed } = await prune(candidates, { olderThanMs });
-  console.log(`deleted ${deleted.length} accounts (Vercel + R2 + Postgres); skipped ${skipped.length} renewed, protected or already removed accounts`);
+  console.log(`cleaned project data for ${deleted.length} accounts (Vercel + R2 + projects/chats); user identities and usage retained; skipped ${skipped.length} renewed, protected or already cleaned accounts`);
   for (const f of failed) console.error(`kept ${f.userId} for retry — cleanup failed: ${f.message}`);
   process.exit(failed.length ? 1 : 0);
 } catch (e) {

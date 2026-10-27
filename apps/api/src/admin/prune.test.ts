@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { eq, like } from "drizzle-orm";
-import { accountAccess, allowlist, db, project, user, type AccessTier } from "@repo/db";
+import { account as authAccount, accountAccess, allowlist, db, message, project, snapshot, user, type AccessTier } from "@repo/db";
 import { r2, snapshotKey } from "../persistence/r2";
 import { findPruneCandidates, parseAge, prune, type PruneStorage } from "./prune";
 
@@ -58,17 +58,26 @@ describe("prune-guests", () => {
     expect(((await r2.list({ prefix: `guests/${id}/` })).contents ?? []).length).toBe(1);
   });
 
-  test("--yes removes the R2 prefix and the rows together", async () => {
-    const { id } = await makeAccount({ tier: "guest", expiresAt: daysAgo(30), withBundle: true });
+  test("--yes removes project data while retaining the account and trial history", async () => {
+    const { id, projectId } = await makeAccount({ tier: "guest", expiresAt: daysAgo(30), withBundle: true });
     const keep = await makeAccount({ tier: "allowlist", expiresAt: daysAgo(30), withBundle: true });
+    await db.insert(authAccount).values({ id: crypto.randomUUID(), userId: id, providerId: 'github', accountId: id });
+    await db.update(accountAccess).set({ stepsUsed: 42 }).where(eq(accountAccess.userId, id));
+    await db.insert(message).values({ projectId, seq: 0, role: 'user', content: 'build an app' });
+    await db.insert(snapshot).values({ projectId, commitHash: 'a'.repeat(40), n: 1, key: snapshotKey('guests', id, projectId, 'a'.repeat(40)) });
 
     const candidates = (await findPruneCandidates(parseAge("7d"))).filter((c) => c.userId === id);
     const { deleted, failed } = await prune(candidates);
 
     expect(failed).toEqual([]);
     expect(deleted.map((d) => d.userId)).toEqual([id]);
-    expect(await db.select().from(user).where(eq(user.id, id))).toHaveLength(0);
+    expect(await db.select().from(user).where(eq(user.id, id))).toHaveLength(1);
     expect(await db.select().from(project).where(eq(project.userId, id))).toHaveLength(0); // cascade
+    expect(await db.select().from(message).where(eq(message.projectId, projectId))).toHaveLength(0);
+    expect(await db.select().from(snapshot).where(eq(snapshot.projectId, projectId))).toHaveLength(0);
+    expect(await db.select().from(authAccount).where(eq(authAccount.userId, id))).toHaveLength(1);
+    expect((await db.select().from(accountAccess).where(eq(accountAccess.userId, id)))[0]).toMatchObject({ stepsUsed: 42, stepsLimit: 60, tier: 'guest' });
+    expect((await db.select().from(accountAccess).where(eq(accountAccess.userId, id)))[0]?.dataPurgedAt).toBeInstanceOf(Date);
     expect(((await r2.list({ prefix: `guests/${id}/` })).contents ?? []).length).toBe(0);
     // The allowlist account is untouched, rows and bundles alike.
     expect(await db.select().from(user).where(eq(user.id, keep.id))).toHaveLength(1);
@@ -94,7 +103,7 @@ function memoryStore(keys: string[] = [], pageSize = 1000) {
 const rowExists = async (id: string) => (await db.select({ id: user.id }).from(user).where(eq(user.id, id))).length > 0;
 
 describe('scheduled cleanup safety and retries', () => {
-  test('deletes verified deployments before files and cascades rows only after both succeed', async () => {
+  test('deletes verified deployments before files and cleans project rows only after both succeed', async () => {
     const { id, projectId } = await makeAccount({ tier: 'byok', expiresAt: daysAgo(30) });
     await db.update(project).set({ vercelProject: `app-${projectId}` }).where(eq(project.id, projectId));
     const f = memoryStore([`guests/${id}/app.bundle`]);
@@ -113,7 +122,8 @@ describe('scheduled cleanup safety and retries', () => {
     expect(result.failed).toEqual([]);
     expect(result.deleted).toHaveLength(1);
     expect(f.objects.size).toBe(0);
-    expect(await rowExists(id)).toBe(false);
+    expect(await rowExists(id)).toBe(true);
+    expect((await findPruneCandidates(parseAge('7d'), f.storage)).some(c => c.userId === id)).toBe(false);
   });
 
   test('provider failures preserve all files and DB references for retry', async () => {
@@ -166,7 +176,7 @@ describe('scheduled cleanup safety and retries', () => {
     expect(second.failed).toEqual([]);
     expect(second.deleted).toHaveLength(1);
     expect(f.objects.size).toBe(0);
-    expect(await rowExists(id)).toBe(false);
+    expect(await rowExists(id)).toBe(true);
     expect(unpublishAttempts).toBe(2); // deployment may already be gone when a retry begins
   });
 
@@ -183,7 +193,7 @@ describe('scheduled cleanup safety and retries', () => {
     expect(result.failed.map(c => c.userId)).toEqual([first.id]);
     expect(result.deleted.map(c => c.userId)).toEqual([second.id]);
     expect(await rowExists(first.id)).toBe(true);
-    expect(await rowExists(second.id)).toBe(false);
+    expect(await rowExists(second.id)).toBe(true);
     expect([...f.objects]).toEqual([`guests/${first.id}/app.bundle`]);
   });
 
@@ -226,7 +236,7 @@ describe('scheduled cleanup safety and retries', () => {
     expect(await rowExists(keep.id)).toBe(true);
   });
 
-  test('overlapping cleanup runs delete an account once', async () => {
+  test('overlapping cleanup runs clean project data once', async () => {
     const { id } = await makeAccount({ tier: 'guest', expiresAt: daysAgo(30) });
     const f = memoryStore([`guests/${id}/app.bundle`]);
     const candidates = (await findPruneCandidates(parseAge('7d'), f.storage)).filter(c => c.userId === id);
@@ -235,5 +245,23 @@ describe('scheduled cleanup safety and retries', () => {
     expect(results.flatMap(r => r.skipped)).toHaveLength(1);
     expect(results.flatMap(r => r.failed)).toEqual([]);
     expect(f.calls.filter(c => c.startsWith('delete:'))).toHaveLength(1);
+  });
+
+  test('a renewed account can have project data cleaned again after a later expiry', async () => {
+    const { id } = await makeAccount({ tier: 'byok', expiresAt: daysAgo(30) });
+    const f = memoryStore([`guests/${id}/first.bundle`]);
+    const first = (await findPruneCandidates(parseAge('7d'), f.storage)).filter(c => c.userId === id);
+    await prune(first, { storage: f.storage, vercel: null });
+    expect((await findPruneCandidates(parseAge('7d'), f.storage)).some(c => c.userId === id)).toBe(false);
+    // Represent a second trial cycle: its expiry is later than the first cleanup.
+    await db.update(accountAccess).set({ dataPurgedAt: daysAgo(20), expiresAt: daysAgo(10) }).where(eq(accountAccess.userId, id));
+    await db.insert(project).values({ userId: id, name: 'second trial project' });
+    f.objects.add(`guests/${id}/second.bundle`);
+    const second = (await findPruneCandidates(parseAge('7d'), f.storage)).filter(c => c.userId === id);
+    expect(second).toHaveLength(1);
+    expect((await prune(second, { storage: f.storage, vercel: null })).deleted).toHaveLength(1);
+    expect(await rowExists(id)).toBe(true);
+    expect(await db.select().from(project).where(eq(project.userId, id))).toHaveLength(0);
+    expect(f.objects.size).toBe(0);
   });
 });

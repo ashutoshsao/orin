@@ -9,6 +9,8 @@ export type UsageRow = {
   stepsUsed: number;
   stepsLimit: number | null;
   expiresAt: Date | null;
+  extensionRequestedAt: Date | null;
+  dataPurgedAt: Date | null;
   projects: number;
   lastActive: Date | null;
 };
@@ -22,6 +24,8 @@ export async function usageOverview(): Promise<UsageRow[]> {
       stepsUsed: accountAccess.stepsUsed,
       stepsLimit: accountAccess.stepsLimit,
       expiresAt: accountAccess.expiresAt,
+      extensionRequestedAt: accountAccess.extensionRequestedAt,
+      dataPurgedAt: accountAccess.dataPurgedAt,
       projects: sql<number>`count(${project.id})::int`,
       lastActive: sql<Date | null>`max(${project.updatedAt})`,
     })
@@ -29,7 +33,7 @@ export async function usageOverview(): Promise<UsageRow[]> {
     .innerJoin(user, eq(user.id, accountAccess.userId))
     .leftJoin(project, eq(project.userId, accountAccess.userId))
     .groupBy(accountAccess.userId, user.email, accountAccess.tier, accountAccess.stepsUsed, accountAccess.stepsLimit, accountAccess.expiresAt)
-    .orderBy(desc(sql`max(${project.updatedAt})`));
+    .orderBy(desc(sql`${accountAccess.extensionRequestedAt} is not null`), desc(sql`max(${project.updatedAt})`));
 }
 
 // Admin is an env list, deliberately separate from the allowlist tier: being able to build

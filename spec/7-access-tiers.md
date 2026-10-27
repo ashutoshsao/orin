@@ -17,7 +17,7 @@ access expires after 7 days; trial data becomes eligible for scheduled cleanup s
 | Sandboxes | unlimited | 1 at a time | 1 at a time |
 | R2 | last 2 bundles/project | last 2, under `guests/` | last 2, under `guests/` |
 | Access | forever | **expires after 7 days** | **expires after 7 days** |
-| Data | kept | cleanup seven days after expiry | cleanup seven days after expiry |
+| Data | kept | project data cleaned seven days after expiry; account retained | project data cleaned seven days after expiry; account retained |
 
 - **Tier comes from the allowlist, not the sign-in method**: GitHub email on the allowlist → unlimited.
 - The 60-step cap bounds R2 + sandbox time, not only tokens (BYOK pays tokens, not our storage).
@@ -143,7 +143,8 @@ access expires after 7 days; trial data becomes eligible for scheduled cleanup s
       - Done: 0008 (+ `allowlist.invited_by` SET NULL); `packages/db/src/cascade.test.ts`.
 - [x] `bun run prune-guests --older-than 7d` — **CLI only, never `/admin`** (`kubectl exec` once deployed):
       **dry run by default** (accounts, projects, deployments, R2 bytes); `--yes` → verified Vercel
-      projects, then the expired account's R2 prefixes, then `DELETE user` (cascades).
+      projects, then the expired account's R2 prefixes, then project/chat/snapshot rows.
+      User profiles, sign-in identities and usage are retained (spec 14).
       Never touches allowlist tier.
       - `admin/prune.ts` (findPruneCandidates / prune / parseAge) + `scripts/prune-guests.ts`.
 - [x] External resources are deleted before Postgres; a failure preserves database references for retry.

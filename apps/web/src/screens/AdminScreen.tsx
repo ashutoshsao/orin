@@ -12,7 +12,7 @@ import { Wordmark } from '@/components/brand'
 // link, and invite an allowlisted person by email. Everything here is reversible; deleting
 // data stays a CLI (`prune-guests`), so there's nothing destructive on this page.
 type GuestLink = { id: string; label: string | null; expiresAt: string; revokedAt: string | null; stepsUsed: number; stepsLimit: number | null }
-type UsageRow = { userId: string; email: string; tier: string; stepsUsed: number; stepsLimit: number | null; expiresAt: string | null; projects: number; lastActive: string | null }
+type UsageRow = { userId: string; email: string; tier: string; stepsUsed: number; stepsLimit: number | null; expiresAt: string | null; projects: number; lastActive: string | null; extensionRequestedAt: string | null; dataPurgedAt: string | null }
 type Overview = { guests: GuestLink[]; usage: UsageRow[] }
 
 export function AdminScreen() {
@@ -22,6 +22,7 @@ export function AdminScreen() {
   const [busy, setBusy] = useState(false)
   const [fresh, setFresh] = useState<{ url: string; kind: string } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [extending, setExtending] = useState<string | null>(null)
 
   const load = () =>
     fetch(`${API}/admin/overview`, authed)
@@ -61,6 +62,18 @@ export function AdminScreen() {
     if (!res.ok) { toast.error('Could not revoke that link.'); return }
     toast.success('Link revoked')
     load()
+  }
+
+  async function extend(userId: string) {
+    if (extending) return
+    setExtending(userId)
+    try {
+      const res = await postJSON(`/admin/users/${userId}/extend-trial`, {})
+      if (!res.ok) { toast.error('Could not extend this trial.'); return }
+      toast.success('Trial extended by 7 days and 60 steps. The user can refresh their access.')
+      await load()
+    } catch { toast.error('Could not reach Orin. Try again.') }
+    finally { setExtending(null) }
   }
 
   if (data === undefined) {
@@ -173,7 +186,14 @@ export function AdminScreen() {
                     {u.tier} · {u.stepsUsed}/{u.stepsLimit ?? '∞'} steps · {u.projects} projects
                     {u.lastActive ? ` · active ${timeAgo(u.lastActive)}` : ''}
                   </p>
+                  {u.extensionRequestedAt && <p className="mt-1 text-xs text-primary">More access requested {timeAgo(u.extensionRequestedAt)}</p>}
+                  {u.dataPurgedAt && <p className="mt-1 text-xs text-muted-foreground">Last project cleanup {new Date(u.dataPurgedAt).toLocaleDateString()} · account retained</p>}
                 </div>
+                {u.stepsLimit !== null && u.tier !== 'allowlist' && (
+                  <Button variant="outline" size="xs" disabled={extending !== null} onClick={() => void extend(u.userId)}>
+                    {extending === u.userId ? 'Extending…' : 'Extend trial'}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>

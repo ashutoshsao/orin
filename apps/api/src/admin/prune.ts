@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, notExists, or, sql } from "drizzle-orm";
 import { accountAccess, allowlist, db, project, user } from "@repo/db";
 import { vercelFromEnv, type VercelClient } from "../deploy/vercel";
 import { r2 } from "../persistence/r2";
@@ -6,6 +6,7 @@ import { r2 } from "../persistence/r2";
 // CLI and scheduled cleanup share this code. Keep expired trial data for another
 // seven days; never prune unlimited accounts. External deletes precede the DB delete
 // so a failure leaves the resource references available for the next run to retry.
+// Keep the user, sign-in identity and access/usage history after project cleanup.
 export const PRUNE_RETENTION = "7d";
 
 export type PruneCandidate = {
@@ -91,6 +92,7 @@ export async function findPruneCandidates(olderThanMs: number, storage: PruneSto
       isNotNull(accountAccess.stepsLimit),
       isNotNull(accountAccess.expiresAt),
       lt(accountAccess.expiresAt, cutoff),
+      or(isNull(accountAccess.dataPurgedAt), lt(accountAccess.dataPurgedAt, accountAccess.expiresAt)),
       notExists(db.select().from(allowlist).where(eq(allowlist.email, sql`lower(${user.email})`))),
     ));
 
@@ -121,7 +123,8 @@ export async function prune(candidates: PruneCandidate[], opts: PruneOptions = {
         if (!owner) return false;
         const [access] = await tx.select().from(accountAccess).where(eq(accountAccess.userId, c.userId)).for("update");
         if (!access || !["guest", "byok"].includes(access.tier) || access.stepsLimit === null ||
-            !access.expiresAt || access.expiresAt >= cutoffFor(olderThanMs)) return false;
+            !access.expiresAt || access.expiresAt >= cutoffFor(olderThanMs) ||
+            (access.dataPurgedAt && access.dataPurgedAt >= access.expiresAt)) return false;
         const [listed] = await tx.select().from(allowlist).where(eq(allowlist.email, owner.email.toLowerCase()));
         if (listed) return false;
 
@@ -145,9 +148,10 @@ export async function prune(candidates: PruneCandidate[], opts: PruneOptions = {
             after = keys.at(-1);
           }
         }
-        // Cascades projects, messages, snapshots, sessions and guest links. External
-        // deletes cannot roll back: failures retain rows, not necessarily all files.
-        await tx.delete(user).where(eq(user.id, c.userId));
+        // Remove project history, but preserve the account, linked sign-in identity,
+        // guest link and spent step budget. Signing in again must not reset a trial.
+        await tx.delete(project).where(eq(project.userId, c.userId));
+        await tx.update(accountAccess).set({ dataPurgedAt: new Date() }).where(eq(accountAccess.userId, c.userId));
         return true;
       });
       (removed ? deleted : skipped).push(c);

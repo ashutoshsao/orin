@@ -14,6 +14,7 @@ import { GithubMark, Wordmark } from '@/components/brand'
 // through a one-time invite link, so knowing an invited address isn't enough.
 export function AuthScreen() {
   const [github, setGithub] = useState(false)
+  const [trial, setTrial] = useState<{ days: number; steps: number } | null>(null)
   const [showEmail, setShowEmail] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -24,7 +25,7 @@ export function AuthScreen() {
   useEffect(() => {
     fetch(`${API}/config`, authed)
       .then((res) => res.json())
-      .then((c: { github?: boolean }) => setGithub(!!c.github))
+      .then((c: { github?: boolean; trial?: { days: number; steps: number } }) => { setGithub(!!c.github); setTrial(c.trial ?? null) })
       .catch(() => {})
   }, [])
 
@@ -65,6 +66,7 @@ export function AuthScreen() {
         {github && (
           <p className="mt-3 text-center text-[13px] text-muted-foreground">
             New here? Sign in with GitHub and bring your own API key.
+            {trial && ` Your trial includes ${trial.steps} build steps over ${trial.days} days. Project data is cleaned up seven days after expiry; your account is retained.`}
           </p>
         )}
 

@@ -13,7 +13,7 @@ import { idSuffix, isValidSlug, suggestSlug, vercelProjectName } from "./deploy/
 import { releaseVercelProject, reserveVercelProject } from "./deploy/reserve";
 import { loadContext, messagePersister, rewindProject, snapshotLoader } from "./persistence/store";
 import { snapshotEnqueuer, startSnapshotWorker } from "./persistence/snapshotQueue";
-import { checkAccess, getAccessView, stepBudget } from "./persistence/access";
+import { checkAccess, getAccessView, stepBudget, TRIAL_DAYS, TRIAL_STEPS } from "./persistence/access";
 import { sweepOrphanSandboxes } from "./sandbox/sweep";
 import { auth, githubEnabled, WEB_ORIGIN } from "./auth";
 import { acceptInvite, InviteError, peekInvite } from "./admin/invites";
@@ -21,6 +21,7 @@ import { createGuestLink, listGuestLinks, redeemGuestLink, revokeGuestLink } fro
 import { createInviteLink } from "./admin/invites";
 import { isAdminEmail, usageOverview } from "./admin/usage";
 import { health } from "./health";
+import { trialRoutes } from "./admin/trialRoutes";
 
 const PORT = 4000;
 
@@ -100,6 +101,7 @@ export const app = new Elysia()
   // What the sign-in screen needs to know before anyone is signed in.
   .get("/config", () => ({
     github: githubEnabled,
+    trial: { days: TRIAL_DAYS, steps: TRIAL_STEPS },
     // Providers a BYOK visitor can choose, with suggested models (fast tier first).
     providers: PROVIDER_IDS.map((id) => ({ id, label: PROVIDERS[id].label, models: PROVIDERS[id].models })),
   }))
@@ -163,6 +165,10 @@ export const app = new Elysia()
     if (!who.ok) { set.status = who.status; return { error: "forbidden" }; }
     return { guests: await listGuestLinks(), usage: await usageOverview() };
   })
+  .use(trialRoutes({
+    getUserId: async request => (await auth.api.getSession({ headers: request.headers }))?.user?.id ?? null,
+    requireAdmin,
+  }))
   .post(
     "/admin/guest-links",
     async ({ request, body, set }) => {

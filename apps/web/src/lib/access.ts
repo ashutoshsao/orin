@@ -9,6 +9,8 @@ export type Access = {
   stepsLeft: number | null // null = unlimited
   expiresAt: string | null
   expired: boolean
+  dataPurgedAt?: string | null
+  extensionRequestedAt?: string | null
 }
 
 // The signed-in account's access, with a refresh for when it changes under us (a step was
@@ -44,4 +46,10 @@ export function useAccess(signedIn: boolean) {
 export function stepsLeftLabel(access: Access | null | undefined): string | null {
   if (!access || access.stepsLeft === null) return null
   return `${access.stepsLeft} ${access.stepsLeft === 1 ? 'step' : 'steps'} left`
+}
+
+export function trialCleanupDate(expiresAt: string | null): string | null {
+  if (!expiresAt) return null
+  const time = new Date(expiresAt).getTime()
+  return Number.isFinite(time) ? new Date(time + 7 * 86_400_000).toLocaleDateString() : null
 }

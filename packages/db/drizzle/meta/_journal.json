@@ -85,6 +85,13 @@
       "when": 1792764748342,
       "tag": "0011_new_arclight",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792941349102,
+      "tag": "0012_special_preak",
+      "breakpoints": true
     }
   ]
 }
